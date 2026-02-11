@@ -1,0 +1,796 @@
+{
+    "pageDimensions": [
+        3507,
+        2480
+    ],
+    "bubbleDimensions": [
+        25,
+        42
+    ],
+    "preProcessors": [
+        {
+            "name": "Levels",
+            "options": {
+                "low": 0.3,
+                "high": 0.7
+            }
+        },
+        {
+            "name": "GaussianBlur",
+            "options": {
+                "kSize": [
+                    3,
+                    3
+                ],
+                "sigmaX": 0
+            }
+        }
+    ],
+    "customLabels": {
+        "Num": [
+            "roll_1..9"
+        ],
+        "Q1": [
+            "Q1_1",
+            "Q1_2"
+        ],
+        "Q2": [
+            "Q2_1",
+            "Q2_2"
+        ],
+        "Q3": [
+            "Q3_1",
+            "Q3_2"
+        ],
+        "Q4": [
+            "Q4_1",
+            "Q4_2"
+        ],
+        "Q5": [
+            "Q5_1",
+            "Q5_2"
+        ],
+        "Q6": [
+            "Q6_1",
+            "Q6_2"
+        ],
+        "Q7": [
+            "Q7_1",
+            "Q7_2"
+        ],
+        "Q8": [
+            "Q8_1",
+            "Q8_2"
+        ],
+        "Q9": [
+            "Q9_1",
+            "Q9_2"
+        ],
+        "Q10": [
+            "Q10_1",
+            "Q10_2"
+        ],
+        "Q11": [
+            "Q11_1",
+            "Q11_2"
+        ],
+        "Q12": [
+            "Q12_1",
+            "Q12_2"
+        ],
+        "Q13": [
+            "Q13_1",
+            "Q13_2"
+        ],
+        "Q14": [
+            "Q14_1",
+            "Q14_2"
+        ],
+        "Q15": [
+            "Q15_1",
+            "Q15_2"
+        ],
+        "Q16": [
+            "Q16_1",
+            "Q16_2"
+        ],
+        "Q17": [
+            "Q17_1",
+            "Q17_2"
+        ],
+        "Q18": [
+            "Q18_1",
+            "Q18_2"
+        ],
+        "Q19": [
+            "Q19_1",
+            "Q19_2"
+        ],
+        "Q20": [
+            "Q20_1",
+            "Q20_2"
+        ],
+        "Q21": [
+            "Q21_1",
+            "Q21_2"
+        ],
+        "Q22": [
+            "Q22_1",
+            "Q22_2"
+        ],
+        "Q23": [
+            "Q23_1",
+            "Q23_2"
+        ],
+        "Q24": [
+            "Q24_1",
+            "Q24_2"
+        ],
+        "Q25": [
+            "Q25_1",
+            "Q25_2"
+        ],
+        "Q26": [
+            "Q26_1",
+            "Q26_2"
+        ],
+        "Q27": [
+            "Q27_1",
+            "Q27_2"
+        ],
+        "Q28": [
+            "Q28_1",
+            "Q28_2"
+        ],
+        "Q29": [
+            "Q29_1",
+            "Q29_2"
+        ],
+        "Q30": [
+            "Q30_1",
+            "Q30_2"
+        ],
+        "Q31": [
+            "Q31_1",
+            "Q31_2"
+        ],
+        "Q32": [
+            "Q32_1",
+            "Q32_2"
+        ],
+        "Q33": [
+            "Q33_1",
+            "Q33_2"
+        ],
+        "Q34": [
+            "Q34_1",
+            "Q34_2"
+        ],
+        "Q35": [
+            "Q35_1",
+            "Q35_2"
+        ],
+        "Q36": [
+            "Q36_1",
+            "Q36_2"
+        ],
+        "Q37": [
+            "Q37_1",
+            "Q37_2"
+        ],
+        "Q38": [
+            "Q38_1",
+            "Q38_2"
+        ],
+        "Q39": [
+            "Q39_1",
+            "Q39_2"
+        ],
+        "Q40": [
+            "Q40_1",
+            "Q40_2"
+        ],
+        "Q41": [
+            "Q41_1",
+            "Q41_2"
+        ],
+        "Q42": [
+            "Q42_1",
+            "Q42_2"
+        ],
+        "Q43": [
+            "Q43_1",
+            "Q43_2"
+        ],
+        "Q44": [
+            "Q44_1",
+            "Q44_2"
+        ]
+    },
+    "fieldBlocks": {
+        "Roll": {
+            "fieldType": "QTYPE_INT",
+            "fieldLabels": [
+                "roll_1..9"
+            ],
+            "bubblesGap": 105,
+            "labelsGap": 62,
+            "origin": [
+                62,
+                1066
+            ]
+        },
+        "Q1": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                650,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q1_1",
+                "Q1_2"
+            ]
+        },
+        "Q2": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                782,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q2_1",
+                "Q2_2"
+            ]
+        },
+        "Q3": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                914,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q3_1",
+                "Q3_2"
+            ]
+        },
+        "Q4": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1046,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q4_1",
+                "Q4_2"
+            ]
+        },
+        "Q5": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1178,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q5_1",
+                "Q5_2"
+            ]
+        },
+        "Q6": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1310,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q6_1",
+                "Q6_2"
+            ]
+        },
+        "Q7": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1442,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q7_1",
+                "Q7_2"
+            ]
+        },
+        "Q8": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1574,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q8_1",
+                "Q8_2"
+            ]
+        },
+        "Q9": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1706,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q9_1",
+                "Q9_2"
+            ]
+        },
+        "Q10": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1838,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q10_1",
+                "Q10_2"
+            ]
+        },
+        "Q11": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1970,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q11_1",
+                "Q11_2"
+            ]
+        },
+        "Q12": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2102,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q12_1",
+                "Q12_2"
+            ]
+        },
+        "Q13": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2234,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q13_1",
+                "Q13_2"
+            ]
+        },
+        "Q14": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2366,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q14_1",
+                "Q14_2"
+            ]
+        },
+        "Q15": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2498,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q15_1",
+                "Q15_2"
+            ]
+        },
+        "Q16": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2630,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q16_1",
+                "Q16_2"
+            ]
+        },
+        "Q17": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2762,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q17_1",
+                "Q17_2"
+            ]
+        },
+        "Q18": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2894,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q18_1",
+                "Q18_2"
+            ]
+        },
+        "Q19": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3026,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q19_1",
+                "Q19_2"
+            ]
+        },
+        "Q20": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3158,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q20_1",
+                "Q20_2"
+            ]
+        },
+        "Q21": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3290,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q21_1",
+                "Q21_2"
+            ]
+        },
+        "Q22": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3422,
+                193
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q22_1",
+                "Q22_2"
+            ]
+        },
+        "Q23": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                650,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q23_1",
+                "Q23_2"
+            ]
+        },
+        "Q24": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                782,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q24_1",
+                "Q24_2"
+            ]
+        },
+        "Q25": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                914,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q25_1",
+                "Q25_2"
+            ]
+        },
+        "Q26": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1046,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q26_1",
+                "Q26_2"
+            ]
+        },
+        "Q27": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1178,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q27_1",
+                "Q27_2"
+            ]
+        },
+        "Q28": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1310,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q28_1",
+                "Q28_2"
+            ]
+        },
+        "Q29": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1442,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q29_1",
+                "Q29_2"
+            ]
+        },
+        "Q30": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1574,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q30_1",
+                "Q30_2"
+            ]
+        },
+        "Q31": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1706,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q31_1",
+                "Q31_2"
+            ]
+        },
+        "Q32": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1838,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q32_1",
+                "Q32_2"
+            ]
+        },
+        "Q33": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                1970,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q33_1",
+                "Q33_2"
+            ]
+        },
+        "Q34": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2102,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q34_1",
+                "Q34_2"
+            ]
+        },
+        "Q35": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2234,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q35_1",
+                "Q35_2"
+            ]
+        },
+        "Q36": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2366,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q36_1",
+                "Q36_2"
+            ]
+        },
+        "Q37": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2498,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q37_1",
+                "Q37_2"
+            ]
+        },
+        "Q38": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2630,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q38_1",
+                "Q38_2"
+            ]
+        },
+        "Q39": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2762,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q39_1",
+                "Q39_2"
+            ]
+        },
+        "Q40": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                2894,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q40_1",
+                "Q40_2"
+            ]
+        },
+        "Q41": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3026,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q41_1",
+                "Q41_2"
+            ]
+        },
+        "Q42": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3158,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q42_1",
+                "Q42_2"
+            ]
+        },
+        "Q43": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3290,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q43_1",
+                "Q43_2"
+            ]
+        },
+        "Q44": {
+            "fieldType": "QTYPE_INT",
+            "origin": [
+                3422,
+                1384
+            ],
+            "bubblesGap": 106,
+            "labelsGap": 55,
+            "fieldLabels": [
+                "Q44_1",
+                "Q44_2"
+            ]
+        }
+    }
+}
