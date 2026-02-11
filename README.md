@@ -49,6 +49,19 @@ python3 web_app.py
 
 ---
 
+## OMR 답안지 인쇄
+
+`template/44_questions.pdf` 파일을 인쇄하면 바로 사용할 수 있는 OMR 답안지가 됩니다.
+
+- **44문항** (Q1~Q44), 각 문항 2자리 숫자 응답 (00~99)
+- **학번 9자리** 기입란 포함
+- **3개 코너 마커** (자동 크롭/정렬에 사용)
+- 빨간색 인쇄 권장 (컬러 드롭아웃으로 인쇄 잔상 자동 제거)
+
+> 인쇄 후 학생들이 답안을 마킹하고, 스캐너로 스캔한 이미지를 웹에 업로드하면 됩니다.
+
+---
+
 ## 사용 방법
 
 ### Step 1: 답안 키 설정
@@ -90,7 +103,8 @@ Q44,36
 speech_lab_OMR_check/
 ├── web_app.py              # Flask 웹 앱 (메인)
 ├── template/
-│   └── template.json       # OMR 레이아웃 템플릿 (QUIZ-3 기준)
+│   ├── template.json       # OMR 레이아웃 템플릿 (버블 좌표 정의)
+│   └── 44_questions.pdf    # 인쇄용 OMR 답안지 (44문항)
 ├── src/                    # OMRChecker 코어 모듈
 │   ├── core.py             # 버블 감지 및 OMR 응답 읽기
 │   ├── template.py         # 템플릿 파싱
