@@ -34,8 +34,6 @@ OMR 답안지를 웹에서 업로드하면 자동으로 인식하고 채점하�
 ### 설치 방법
 
 ```bash
-git clone https://github.com/<your-username>/speech_lab_OMR_check.git
-cd speech_lab_OMR_check
 pip install -r requirements.txt
 ```
 
