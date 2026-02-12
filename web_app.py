@@ -391,16 +391,16 @@ def marker_align_and_crop(image, color_image=None):
     """
     3개의 코너 마커를 검출하여 Affine 변환으로 정렬+크롭.
     
-    개선된 처리 순서:
-    1. 원본 이미지에서 마커 검출 (4방향 시도)
-    2. 마커 위치 기반으로 올바른 방향 결정 및 회전
-    3. 회전된 이미지에서 마커 재검출
-    4. Affine 변환으로 정렬 및 크롭 → (3507, 2480)
-    5. 컬러 드롭아웃 (빨간 인쇄 제거)
+    올바른 처리 순서:
+    1. 컬러 드롭아웃 (빨간 인쇄 제거) → 흑백 변환
+    2. 흑백 이미지에서 마커 검출 (4방향 시도)
+    3. 마커 위치 기반 회전 보정
+    4. 마커 바깥쪽 기준 Affine 변환 + 크롭 → (3507, 2480)
+    5. 전처리
 
     image: 그레이스케일 (Red 채널)
-    color_image: 원본 컬러 이미지 (워프 후 Red 채널 추출용)
-    Returns: (warped_red_channel, success_bool, debug_images_dict)
+    color_image: 원본 컬러 이미지
+    Returns: (warped_grayscale, success_bool, debug_images_dict)
     """
     DST_SIZE = (3507, 2480)
     debug_images = {}
@@ -417,15 +417,20 @@ def marker_align_and_crop(image, color_image=None):
         # 디버그: 원본 이미지 저장
         debug_images['01_original'] = color_img.copy()
         
-        # 그레이스케일 변환
+        # 1. 컬러 드롭아웃 (빨간 인쇄 제거): max(B, G, R) → 검정 마킹만 남김
         if len(color_img.shape) == 3:
-            gray = cv2.cvtColor(color_img, cv2.COLOR_BGR2GRAY)
+            b, g, r = cv2.split(color_img)
+            gray = np.maximum(np.maximum(b, g), r)
         else:
             gray = color_img.copy()
         
-        # 1. 마커 검출 시도 (최대 4방향)
+        debug_images['02_color_dropout'] = gray.copy()
+        logger.info(f"컬러 드롭아웃 완료: {color_img.shape} → {gray.shape}")
+        
+        # 2. 마커 검출 시도 (최대 4방향)
         best_angle = None
         best_centers = None
+        best_rotated_gray = None
         
         for angle in [0, 90, 180, 270]:
             if angle == 0:
@@ -448,50 +453,39 @@ def marker_align_and_crop(image, color_image=None):
                     # 올바른 방향 찾음
                     best_angle = angle
                     best_centers = centers
+                    best_rotated_gray = test_img
                     logger.info(f"✓ 최종 선택: {angle}도 회전으로 정상 방향")
                     break
                 elif best_angle is None:
                     # 첫 번째로 마커가 검출된 각도 저장 (fallback)
                     best_angle = angle
                     best_centers = centers
+                    best_rotated_gray = test_img
                     logger.info(f"임시 저장: {angle}도 (추가 회전 {marker_angle}도 필요)")
         
         if best_angle is None or best_centers is None:
             logger.warning("모든 방향에서 마커 검출 실패")
             return None, False, debug_images
         
-        # 2. 올바른 방향으로 회전
-        if best_angle == 0:
-            rotated_img = color_img.copy()
-        elif best_angle == 90:
-            rotated_img = cv2.rotate(color_img, cv2.ROTATE_90_CLOCKWISE)
-        elif best_angle == 180:
-            rotated_img = cv2.rotate(color_img, cv2.ROTATE_180)
-        else:  # 270
-            rotated_img = cv2.rotate(color_img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        # 3. 회전 보정 (흑백 이미지)
+        rotated_gray = best_rotated_gray
+        debug_images['03_rotated'] = rotated_gray.copy()
         
-        debug_images['02_rotated'] = rotated_img.copy()
-        
-        # 3. 회전된 이미지에서 마커 재검출 (더 정확한 좌표)
-        if len(rotated_img.shape) == 3:
-            gray_rotated = cv2.cvtColor(rotated_img, cv2.COLOR_BGR2GRAY)
-        else:
-            gray_rotated = rotated_img.copy()
-        
-        centers, success = detect_markers(gray_rotated)
+        # 4. 회전된 이미지에서 마커 재검출 (더 정확한 좌표)
+        centers, success = detect_markers(rotated_gray)
         if not success:
-            logger.warning("회전 후 마커 재검출 실패")
-            return None, False, debug_images
+            logger.warning("회전 후 마커 재검출 실패 - 이전 좌표 사용")
+            centers = best_centers
         
         # 마커 위치 표시 (디버그용)
-        marked_img = rotated_img.copy()
+        marked_img = cv2.cvtColor(rotated_gray, cv2.COLOR_GRAY2BGR)
         for i, center in enumerate(centers):
             cv2.circle(marked_img, tuple(center.astype(int)), 20, (0, 255, 0), 3)
             cv2.putText(marked_img, f"M{i+1}", tuple(center.astype(int)), 
                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
-        debug_images['03_markers_detected'] = marked_img
+        debug_images['04_markers_detected'] = marked_img
         
-        # 4. 마커를 왼쪽 위, 오른쪽 위, 오른쪽 아래로 정렬
+        # 5. 마커를 왼쪽 위, 오른쪽 위, 오른쪽 아래로 정렬
         sorted_by_y = sorted(centers, key=lambda c: c[1])
         top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
         bottom_one = sorted_by_y[2]
@@ -500,7 +494,7 @@ def marker_align_and_crop(image, color_image=None):
         top_right = top_two[1]
         bottom_right = bottom_one
         
-        # 5. Affine 변환으로 워프
+        # 6. Affine 변환으로 워프 (마커 바깥쪽을 기준으로 크롭)
         src_pts = np.array(
             [top_left, top_right, bottom_right], dtype="float32"
         )
@@ -510,23 +504,12 @@ def marker_align_and_crop(image, color_image=None):
         )
 
         M_affine = cv2.getAffineTransform(src_pts, dst_pts)
-        warped = cv2.warpAffine(rotated_img, M_affine, DST_SIZE)
+        warped = cv2.warpAffine(rotated_gray, M_affine, DST_SIZE)
         
-        debug_images['04_warped'] = warped.copy()
-
-        # JPEG 인코딩/디코딩 (JPEG 압축이 잔상 제거에 도움)
-        _, jpeg_buf = cv2.imencode(".jpg", warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        warped = cv2.imdecode(jpeg_buf, cv2.IMREAD_COLOR)
-
-        # 6. 컬러 드롭아웃: max(B,G,R) → 컬러 인쇄 밝게, 검정 마킹만 어둡게
-        if len(warped.shape) == 3:
-            wb, wg, wr = cv2.split(warped)
-            warped = np.maximum(np.maximum(wb, wg), wr)
-        
-        debug_images['05_color_dropout'] = warped.copy()
+        debug_images['05_warped'] = warped.copy()
 
         logger.info(
-            f"마커 정렬+크롭 완료 (회전: {best_angle}도): {image.shape} -> {warped.shape}"
+            f"마커 정렬+크롭 완료 (회전: {best_angle}도): {gray.shape} -> {warped.shape}"
         )
         return warped, True, debug_images
 
@@ -1335,10 +1318,10 @@ function openModal(idx) {
     if (debugImages && Object.keys(debugImages).length > 0) {
         const stages = [
             {key: '01_original', label: '1. 원본 이미지'},
-            {key: '02_rotated', label: '2. 회전 보정'},
-            {key: '03_markers_detected', label: '3. 마커 검출'},
-            {key: '04_warped', label: '4. Affine 변환'},
-            {key: '05_color_dropout', label: '5. 컬러 드롭아웃'},
+            {key: '02_color_dropout', label: '2. 컬러 드롭아웃 (흑백)'},
+            {key: '03_rotated', label: '3. 회전 보정'},
+            {key: '04_markers_detected', label: '4. 마커 검출'},
+            {key: '05_warped', label: '5. Affine 변환 (크롭)'},
             {key: 'fallback_resize', label: '⚠️ Fallback 리사이즈 (마커 없음)'},
             {key: '06_preprocessed', label: '6. 전처리 완료'},
             {key: '07_template_overlay', label: '7. 템플릿 버블 위치'},
