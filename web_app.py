@@ -253,49 +253,69 @@ def determine_orientation_from_markers(centers):
     마커 위치를 기반으로 이미지 회전 각도를 결정.
     마커가 왼쪽 위, 오른쪽 위, 오른쪽 아래에 오도록 회전 각도 반환.
     
+    정상 배치:
+    M1(왼쪽 위)  M2(오른쪽 위)
+    
+                M3(오른쪽 아래)
+    
     Returns: rotation_angle (0, 90, 180, 270)
     """
-    # Y좌표로 정렬하여 위쪽과 아래쪽 구분
-    sorted_by_y = sorted(centers, key=lambda c: c[1])
+    # 무게중심 계산
+    center_y = np.mean(centers[:, 1])
+    center_x = np.mean(centers[:, 0])
     
-    # Y 좌표 차이 계산
-    y_diff_top = abs(sorted_by_y[1][1] - sorted_by_y[0][1])
-    y_diff_bottom = abs(sorted_by_y[2][1] - sorted_by_y[1][1])
+    # 각 마커를 위쪽 그룹과 아래쪽 그룹으로 분류
+    top_markers = []
+    bottom_markers = []
     
-    # 위쪽 2개가 비슷한 높이에 있는지 확인 (임계값: 이미지 높이의 10%)
-    image_diagonal = np.sqrt(centers[:, 0].max()**2 + centers[:, 1].max()**2)
-    threshold = image_diagonal * 0.1
+    for center in centers:
+        if center[1] < center_y:
+            top_markers.append(center)
+        else:
+            bottom_markers.append(center)
     
-    if y_diff_top < threshold and y_diff_bottom > threshold:
-        # 정상: 위쪽 2개, 아래쪽 1개
-        top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
-        bottom_one = sorted_by_y[2]
+    # Case 1: 위쪽 2개, 아래쪽 1개 (정상 또는 180도)
+    if len(top_markers) == 2 and len(bottom_markers) == 1:
+        top_markers = sorted(top_markers, key=lambda c: c[0])
+        bottom_marker = bottom_markers[0]
         
-        left_x = top_two[0][0]
-        right_x = top_two[1][0]
-        bottom_x = bottom_one[0]
-        
-        # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
-        if bottom_x > (left_x + right_x) * 0.6:  # 오른쪽 60% 이상
+        # 아래쪽 마커가 오른쪽에 있으면 정상
+        if bottom_marker[0] > center_x:
+            logger.info("  → 정상 방향 (위 2개, 아래 1개 오른쪽)")
             return 0
         else:
-            return 180  # 좌우 반전
+            logger.info("  → 180도 회전 필요 (위 2개, 아래 1개 왼쪽)")
+            return 180
     
-    elif y_diff_bottom < threshold and y_diff_top > threshold:
-        # 180도 회전: 아래쪽 2개, 위쪽 1개
+    # Case 2: 위쪽 1개, 아래쪽 2개 (180도 회전 상태)
+    elif len(top_markers) == 1 and len(bottom_markers) == 2:
+        logger.info("  → 180도 회전 필요 (위 1개, 아래 2개)")
         return 180
+    
+    # Case 3: 세로로 배치 (90도 또는 270도)
     else:
-        # 가로로 3개 배치 → 90도 또는 270도 회전 필요
-        sorted_by_x = sorted(centers, key=lambda c: c[0])
-        x_diff_left = abs(sorted_by_x[1][0] - sorted_by_x[0][0])
-        x_diff_right = abs(sorted_by_x[2][0] - sorted_by_x[1][0])
+        # X 좌표로 왼쪽과 오른쪽 그룹 분류
+        left_markers = []
+        right_markers = []
         
-        if x_diff_left < threshold and x_diff_right > threshold:
-            # 왼쪽 2개, 오른쪽 1개 → 270도 (시계반대방향)
+        for center in centers:
+            if center[0] < center_x:
+                left_markers.append(center)
+            else:
+                right_markers.append(center)
+        
+        # 왼쪽 2개, 오른쪽 1개 → 270도 (반시계 회전 필요)
+        if len(left_markers) == 2 and len(right_markers) == 1:
+            logger.info("  → 270도 회전 필요 (왼쪽 2개, 오른쪽 1개)")
             return 270
-        else:
-            # 오른쪽 2개, 왼쪽 1개 → 90도 (시계방향)
+        # 왼쪽 1개, 오른쪽 2개 → 90도 (시계 회전 필요)
+        elif len(left_markers) == 1 and len(right_markers) == 2:
+            logger.info("  → 90도 회전 필요 (왼쪽 1개, 오른쪽 2개)")
             return 90
+        else:
+            # 정확히 판단 못하면 0도 반환
+            logger.warning("  → 마커 배치 불명확, 0도로 가정")
+            return 0
 
 
 def detect_markers(gray_image):
@@ -417,15 +437,23 @@ def marker_align_and_crop(image, color_image=None):
         # 디버그: 원본 이미지 저장
         debug_images['01_original'] = color_img.copy()
         
-        # 1. 컬러 드롭아웃 (빨간 인쇄 제거): max(B, G, R) → 검정 마킹만 남김
+        # 1. 레드 드롭아웃 (빨간 인쇄를 흰색으로 완전히 제거)
         if len(color_img.shape) == 3:
             b, g, r = cv2.split(color_img)
+            # 빨간색 채널이 강한 부분을 흰색(255)으로
+            # B, G 채널보다 R이 훨씬 크면 빨간 인쇄로 판단
+            red_mask = (r > b + 30) & (r > g + 30) & (r > 100)
+            
+            # max(B, G, R)로 기본 드롭아웃
             gray = np.maximum(np.maximum(b, g), r)
+            
+            # 빨간 부분을 완전히 흰색으로
+            gray[red_mask] = 255
         else:
             gray = color_img.copy()
         
         debug_images['02_color_dropout'] = gray.copy()
-        logger.info(f"컬러 드롭아웃 완료: {color_img.shape} → {gray.shape}")
+        logger.info(f"레드 드롭아웃 완료: {color_img.shape} → {gray.shape}")
         
         # 2. 마커 검출 시도 (최대 4방향)
         best_angle = None
@@ -446,8 +474,10 @@ def marker_align_and_crop(image, color_image=None):
             centers, success = detect_markers(test_img)
             if success:
                 # 마커 위치 기반으로 올바른 방향인지 확인
+                logger.info(f"  각도 {angle}도에서 마커 검출 성공:")
+                logger.info(f"    마커 좌표: {centers.tolist()}")
+                
                 marker_angle = determine_orientation_from_markers(centers)
-                logger.info(f"각도 {angle}도에서 마커 검출 성공, 필요한 추가 회전: {marker_angle}도")
                 
                 if marker_angle == 0:
                     # 올바른 방향 찾음
@@ -461,7 +491,9 @@ def marker_align_and_crop(image, color_image=None):
                     best_angle = angle
                     best_centers = centers
                     best_rotated_gray = test_img
-                    logger.info(f"임시 저장: {angle}도 (추가 회전 {marker_angle}도 필요)")
+                    logger.info(f"  임시 저장: {angle}도 (추가 {marker_angle}도 필요)")
+            else:
+                logger.info(f"  각도 {angle}도에서 마커 검출 실패")
         
         if best_angle is None or best_centers is None:
             logger.warning("모든 방향에서 마커 검출 실패")
