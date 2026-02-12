@@ -255,31 +255,47 @@ def determine_orientation_from_markers(centers):
     
     Returns: rotation_angle (0, 90, 180, 270)
     """
-    # 위쪽 2개, 아래쪽 1개 분류
+    # Y좌표로 정렬하여 위쪽과 아래쪽 구분
     sorted_by_y = sorted(centers, key=lambda c: c[1])
     
-    # 가장 위쪽 2개
-    top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
-    bottom_one = sorted_by_y[2]
+    # Y 좌표 차이 계산
+    y_diff_top = abs(sorted_by_y[1][1] - sorted_by_y[0][1])
+    y_diff_bottom = abs(sorted_by_y[2][1] - sorted_by_y[1][1])
     
-    # 아래쪽 마커의 x 좌표 확인
-    left_x = top_two[0][0]
-    right_x = top_two[1][0]
-    bottom_x = bottom_one[0]
+    # 위쪽 2개가 비슷한 높이에 있는지 확인 (임계값: 이미지 높이의 10%)
+    image_diagonal = np.sqrt(centers[:, 0].max()**2 + centers[:, 1].max()**2)
+    threshold = image_diagonal * 0.1
     
-    # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
-    if bottom_x > (left_x + right_x) / 2:
-        # 정상 방향
-        return 0
-    elif bottom_one[1] < top_two[0][1]:
-        # 180도 회전 필요 (위아래 뒤집힘)
+    if y_diff_top < threshold and y_diff_bottom > threshold:
+        # 정상: 위쪽 2개, 아래쪽 1개
+        top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
+        bottom_one = sorted_by_y[2]
+        
+        left_x = top_two[0][0]
+        right_x = top_two[1][0]
+        bottom_x = bottom_one[0]
+        
+        # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
+        if bottom_x > (left_x + right_x) * 0.6:  # 오른쪽 60% 이상
+            return 0
+        else:
+            return 180  # 좌우 반전
+    
+    elif y_diff_bottom < threshold and y_diff_top > threshold:
+        # 180도 회전: 아래쪽 2개, 위쪽 1개
         return 180
-    elif bottom_x < left_x:
-        # 90도 시계반대방향 회전 필요
-        return 270
     else:
-        # 90도 시계방향 회전 필요
-        return 90
+        # 가로로 3개 배치 → 90도 또는 270도 회전 필요
+        sorted_by_x = sorted(centers, key=lambda c: c[0])
+        x_diff_left = abs(sorted_by_x[1][0] - sorted_by_x[0][0])
+        x_diff_right = abs(sorted_by_x[2][0] - sorted_by_x[1][0])
+        
+        if x_diff_left < threshold and x_diff_right > threshold:
+            # 왼쪽 2개, 오른쪽 1개 → 270도 (시계반대방향)
+            return 270
+        else:
+            # 오른쪽 2개, 왼쪽 1개 → 90도 (시계방향)
+            return 90
 
 
 def detect_markers(gray_image):
@@ -426,12 +442,19 @@ def marker_align_and_crop(image, color_image=None):
             if success:
                 # 마커 위치 기반으로 올바른 방향인지 확인
                 marker_angle = determine_orientation_from_markers(centers)
+                logger.info(f"각도 {angle}도에서 마커 검출 성공, 필요한 추가 회전: {marker_angle}도")
+                
                 if marker_angle == 0:
                     # 올바른 방향 찾음
                     best_angle = angle
                     best_centers = centers
-                    logger.info(f"마커 검출 성공: {angle}도 회전 시 정상 방향")
+                    logger.info(f"✓ 최종 선택: {angle}도 회전으로 정상 방향")
                     break
+                elif best_angle is None:
+                    # 첫 번째로 마커가 검출된 각도 저장 (fallback)
+                    best_angle = angle
+                    best_centers = centers
+                    logger.info(f"임시 저장: {angle}도 (추가 회전 {marker_angle}도 필요)")
         
         if best_angle is None or best_centers is None:
             logger.warning("모든 방향에서 마커 검출 실패")
@@ -514,6 +537,67 @@ def marker_align_and_crop(image, color_image=None):
         return None, False, debug_images
 
 
+def draw_template_bubbles_on_image(image, template):
+    """
+    이미지에 템플릿의 모든 버블 위치를 표시.
+    Returns: 버블이 표시된 이미지 (numpy array)
+    """
+    try:
+        # 이미지 복사
+        if len(image.shape) == 2:
+            viz_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        else:
+            viz_img = image.copy()
+        
+        # 각 field block의 버블 그리기
+        for field_block in template.field_blocks:
+            for field_bubbles in field_block.traverse_bubbles:
+                for bubble in field_bubbles:
+                    # 버블 중심점
+                    cx, cy = bubble.x, bubble.y
+                    
+                    # 버블 크기
+                    bubble_w, bubble_h = template.bubble_dimensions
+                    
+                    # 사각형으로 버블 영역 표시 (반투명 녹색)
+                    top_left = (int(cx - bubble_w//2), int(cy - bubble_h//2))
+                    bottom_right = (int(cx + bubble_w//2), int(cy + bubble_h//2))
+                    
+                    # 버블 테두리 (녹색)
+                    cv2.rectangle(viz_img, top_left, bottom_right, (0, 255, 0), 1)
+                    
+                    # 중심점 (작은 빨간 점)
+                    cv2.circle(viz_img, (cx, cy), 2, (0, 0, 255), -1)
+        
+        # Field block 이름 표시
+        for field_block in template.field_blocks:
+            if field_block.traverse_bubbles:
+                first_bubble = field_block.traverse_bubbles[0][0]
+                cx, cy = first_bubble.x, first_bubble.y
+                
+                # 텍스트 배경
+                text = field_block.name
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.4
+                thickness = 1
+                (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                
+                # 배경 사각형 (반투명 흰색)
+                cv2.rectangle(viz_img, 
+                            (cx - 5, cy - text_h - 10), 
+                            (cx + text_w + 5, cy - 5),
+                            (255, 255, 255), -1)
+                
+                # 텍스트 (검정색)
+                cv2.putText(viz_img, text, (cx, cy - 8),
+                           font, font_scale, (0, 0, 0), thickness)
+        
+        return viz_img
+    except Exception as e:
+        logger.error(f"템플릿 버블 표시 중 에러: {e}")
+        return image
+
+
 def process_single_image(template, image, file_name, enable_crop=True, color_image=None):
     """
     단일 이미지 OMR 처리.
@@ -545,6 +629,10 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
         
         # 전처리 후 이미지 저장
         debug_images['06_preprocessed'] = processed.copy()
+        
+        # 템플릿 버블 위치 표시 이미지 추가
+        template_overlay = draw_template_bubbles_on_image(processed, template)
+        debug_images['07_template_overlay'] = template_overlay
 
         response_dict, final_marked, multi_marked, multi_roll = (
             template.image_instance_ops.read_omr_response(
@@ -1189,7 +1277,8 @@ function openModal(idx) {
             {key: '03_markers_detected', label: '3. 마커 검출'},
             {key: '04_warped', label: '4. Affine 변환'},
             {key: '05_color_dropout', label: '5. 컬러 드롭아웃'},
-            {key: '06_preprocessed', label: '6. 전처리 완료'}
+            {key: '06_preprocessed', label: '6. 전처리 완료'},
+            {key: '07_template_overlay', label: '7. 템플릿 버블 위치'}
         ];
         
         stages.forEach(stage => {
@@ -1207,7 +1296,7 @@ function openModal(idx) {
         if (debugImg) {
             imageHtml += `
                 <div style="margin-bottom: 20px;">
-                    <h4 style="margin: 10px 0; color: #333; font-size: 14px;">7. 최종 인식 결과</h4>
+                    <h4 style="margin: 10px 0; color: #333; font-size: 14px;">8. 최종 인식 결과 (채점)</h4>
                     <img src="data:image/jpeg;base64,${debugImg}" 
                          style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
                 </div>`;
