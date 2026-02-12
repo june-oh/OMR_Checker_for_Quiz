@@ -373,6 +373,44 @@ def detect_markers(gray_image):
         return None, False
 
 
+def validate_marker_position(centers):
+    """
+    마커가 왼쪽 위, 오른쪽 위, 오른쪽 아래에 올바르게 있는지 검증.
+    Returns: (is_valid, description)
+    """
+    if len(centers) != 3:
+        return False, "마커 3개 필요"
+    
+    # Y 좌표로 정렬 (위에서 아래로)
+    sorted_by_y = sorted(centers, key=lambda c: c[1])
+    
+    # 위쪽 2개와 아래쪽 1개 분리
+    top_two = sorted_by_y[:2]
+    bottom_one = sorted_by_y[2]
+    
+    # 위쪽 2개를 X 좌표로 정렬 (왼쪽, 오른쪽)
+    top_two_sorted = sorted(top_two, key=lambda c: c[0])
+    top_left = top_two_sorted[0]
+    top_right = top_two_sorted[1]
+    
+    # 검증 1: 위쪽 2개가 실제로 위쪽에 있는지 (Y 좌표가 아래쪽보다 작아야 함)
+    if top_left[1] >= bottom_one[1] or top_right[1] >= bottom_one[1]:
+        return False, "위쪽 마커가 아래쪽보다 아래에 있음"
+    
+    # 검증 2: 아래쪽 마커가 오른쪽에 있는지 (X 좌표가 중심보다 커야 함)
+    center_x = (top_left[0] + top_right[0]) / 2
+    if bottom_one[0] <= center_x:
+        return False, f"아래쪽 마커가 왼쪽에 있음 (x={bottom_one[0]:.0f} <= 중심={center_x:.0f})"
+    
+    # 검증 3: 위쪽 2개가 수평으로 어느 정도 정렬되어 있는지 (Y 차이가 너무 크면 안 됨)
+    y_diff = abs(top_left[1] - top_right[1])
+    x_diff = abs(top_left[0] - top_right[0])
+    if y_diff > x_diff * 0.3:  # Y 차이가 X 차이의 30% 이상이면 이상
+        return False, f"위쪽 마커가 수평 정렬 안 됨 (Y차={y_diff:.0f}, X차={x_diff:.0f})"
+    
+    return True, "정상 (왼쪽 위, 오른쪽 위, 오른쪽 아래)"
+
+
 def determine_orientation_from_markers(centers):
     """
     마커 위치를 기반으로 이미지 회전 각도를 결정.
@@ -380,31 +418,17 @@ def determine_orientation_from_markers(centers):
     
     Returns: rotation_angle (0, 90, 180, 270)
     """
-    # 위쪽 2개, 아래쪽 1개 분류
-    sorted_by_y = sorted(centers, key=lambda c: c[1])
+    # 먼저 현재 위치가 올바른지 검증
+    is_valid, desc = validate_marker_position(centers)
     
-    # 가장 위쪽 2개
-    top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
-    bottom_one = sorted_by_y[2]
+    logger.info(f"  마커 위치 검증: {desc}")
     
-    # 아래쪽 마커의 x 좌표 확인
-    left_x = top_two[0][0]
-    right_x = top_two[1][0]
-    bottom_x = bottom_one[0]
+    if is_valid:
+        return 0  # 이미 올바른 위치
     
-    # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
-    if bottom_x > (left_x + right_x) / 2:
-        # 정상 방향
-        return 0
-    elif bottom_one[1] < top_two[0][1]:
-        # 180도 회전 필요 (위아래 뒤집힘)
-        return 180
-    elif bottom_x < left_x:
-        # 90도 시계반대방향 회전 필요
-        return 270
-    else:
-        # 90도 시계방향 회전 필요
-        return 90
+    # 올바르지 않으면 180도 회전 시도
+    # (세로 이미지는 이미 가로로 회전된 상태이므로, 180도만 확인)
+    return 180
 
 
 def marker_align_and_crop(image, color_image=None):
@@ -455,21 +479,70 @@ def marker_align_and_crop(image, color_image=None):
         debug_images['02_color_dropout'] = gray.copy()
         logger.info(f"레드 드롭아웃 완료: {color_img.shape} → {gray.shape}")
         
-        # 2. 세로/가로 판단 및 기본 회전
+        # 2. 세로/가로 판단 및 회전 방향 지능적 결정
         h, w = gray.shape[:2]
         logger.info(f"이미지 크기: {w}×{h} (가로×세로)")
         
+        initial_rotation = 0
+        
         if h > w:
-            # 세로 이미지 → 무조건 90도 회전 (가로로 만들기)
-            gray = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
-            initial_rotation = 90
-            logger.info(f"✓ 세로 이미지 감지 → 90도 회전: {gray.shape}")
+            # 세로 이미지 → 시계방향/반시계방향 중 마커로 결정
+            logger.info("세로 이미지 감지 - 마커로 회전 방향 결정")
+            
+            # 시계방향 90도 시도
+            gray_cw = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
+            centers_cw, success_cw = detect_markers(gray_cw)
+            
+            # 반시계방향 270도 시도
+            gray_ccw = cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            centers_ccw, success_ccw = detect_markers(gray_ccw)
+            
+            # 두 방향 평가
+            best_score = -999
+            best_direction = None
+            best_gray = None
+            best_rotation = 0
+            
+            if success_cw:
+                is_valid_cw, desc_cw = validate_marker_position(centers_cw)
+                score_cw = 100 if is_valid_cw else 0
+                logger.info(f"  시계방향(90도): {desc_cw}, 점수={score_cw}")
+                if score_cw > best_score:
+                    best_score = score_cw
+                    best_direction = "시계"
+                    best_gray = gray_cw
+                    best_rotation = 90
+            else:
+                logger.info(f"  시계방향(90도): 마커 검출 실패")
+            
+            if success_ccw:
+                is_valid_ccw, desc_ccw = validate_marker_position(centers_ccw)
+                score_ccw = 100 if is_valid_ccw else 0
+                logger.info(f"  반시계방향(270도): {desc_ccw}, 점수={score_ccw}")
+                if score_ccw > best_score:
+                    best_score = score_ccw
+                    best_direction = "반시계"
+                    best_gray = gray_ccw
+                    best_rotation = 270
+            else:
+                logger.info(f"  반시계방향(270도): 마커 검출 실패")
+            
+            # 최적 방향 선택
+            if best_direction:
+                gray = best_gray
+                initial_rotation = best_rotation
+                logger.info(f"✓ {best_direction}방향 선택 ({best_rotation}도, 점수: {best_score})")
+            else:
+                # 둘 다 실패 - 기본 시계방향
+                gray = gray_cw
+                initial_rotation = 90
+                logger.warning("양방향 모두 실패 - 시계방향(90도) 기본 선택")
         else:
             # 가로 이미지 → 그대로
-            initial_rotation = 0
-            logger.info(f"✓ 가로 이미지 감지 → 회전 없음: {gray.shape}")
+            logger.info(f"✓ 가로 이미지 - 회전 없음")
         
         debug_images['03_rotated'] = gray.copy()
+        logger.info(f"초기 회전 완료: {initial_rotation}도, 크기: {gray.shape}")
         
         # 3. 마커 검출
         centers, success = detect_markers(gray)
@@ -487,25 +560,32 @@ def marker_align_and_crop(image, color_image=None):
                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
         debug_images['04_markers_detected'] = marked_img
         
-        # 4. 마커 방향 확인 및 추가 회전 (필요시)
+        # 4. 마커 방향 최종 확인 및 추가 회전 (필요시)
         additional_rotation = determine_orientation_from_markers(centers)
         
         if additional_rotation != 0:
-            logger.info(f"추가 회전 필요: {additional_rotation}도")
+            logger.warning(f"⚠️ 추가 회전 필요: {additional_rotation}도 (마커가 잘못된 위치)")
             if additional_rotation == 90:
                 gray = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
             elif additional_rotation == 180:
                 gray = cv2.rotate(gray, cv2.ROTATE_180)
+                logger.warning("  → 180도 회전: 마커가 왼쪽 아래에 있었음!")
             elif additional_rotation == 270:
                 gray = cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
             
             # 마커 재검출
             centers, success = detect_markers(gray)
             if not success:
-                logger.warning("추가 회전 후 마커 재검출 실패")
+                logger.error("추가 회전 후 마커 재검출 실패")
                 return None, False, debug_images
             
-            debug_images['04b_after_additional_rotation'] = gray.copy()
+            # 마커 위치 재표시
+            marked_img2 = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            for i, center in enumerate(centers):
+                cv2.circle(marked_img2, tuple(center.astype(int)), 20, (0, 255, 0), 3)
+                cv2.putText(marked_img2, f"M{i+1}", tuple(center.astype(int)), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
+            debug_images['04b_after_additional_rotation'] = marked_img2
         
         total_rotation = (initial_rotation + additional_rotation) % 360
         logger.info(f"최종 회전: {total_rotation}도 (초기 {initial_rotation}도 + 추가 {additional_rotation}도)")
@@ -519,7 +599,29 @@ def marker_align_and_crop(image, color_image=None):
         top_right = top_two[1]
         bottom_right = bottom_one
         
-        logger.info(f"마커 위치: TL{top_left.astype(int).tolist()}, TR{top_right.astype(int).tolist()}, BR{bottom_right.astype(int).tolist()}")
+        # 최종 검증: 오른쪽 아래 마커가 실제로 오른쪽에 있는지
+        center_x = (top_left[0] + top_right[0]) / 2
+        if bottom_right[0] < center_x:
+            logger.error(f"❌ 마커 검증 실패: 오른쪽 아래 마커가 x={bottom_right[0]:.0f}, 중심={center_x:.0f}")
+            logger.error("  → 왼쪽 아래에 있음! 180도 추가 회전")
+            gray = cv2.rotate(gray, cv2.ROTATE_180)
+            centers, success = detect_markers(gray)
+            if not success:
+                logger.error("180도 보정 후 마커 재검출 실패")
+                return None, False, debug_images
+            
+            sorted_by_y = sorted(centers, key=lambda c: c[1])
+            top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
+            bottom_one = sorted_by_y[2]
+            top_left = top_two[0]
+            top_right = top_two[1]
+            bottom_right = bottom_one
+            
+            total_rotation = (total_rotation + 180) % 360
+            logger.info(f"✓ 180도 보정 완료 - 최종: {total_rotation}도")
+            debug_images['04c_180_degree_fix'] = gray.copy()
+        
+        logger.info(f"✓ 마커 검증 완료: TL{top_left.astype(int).tolist()}, TR{top_right.astype(int).tolist()}, BR{bottom_right.astype(int).tolist()}")
         
         # 6. Affine 변환으로 워프 (마커 바깥쪽을 기준으로 크롭)
         src_pts = np.array(
@@ -548,7 +650,7 @@ def marker_align_and_crop(image, color_image=None):
 
 def draw_template_bubbles_on_image(image, template):
     """
-    이미지에 템플릿의 모든 버블 위치를 표시.
+    이미지에 템플릿의 모든 버블 위치를 고해상도로 표시.
     Returns: 버블이 표시된 이미지 (numpy array)
     """
     try:
@@ -568,17 +670,17 @@ def draw_template_bubbles_on_image(image, template):
                     # 버블 크기
                     bubble_w, bubble_h = template.bubble_dimensions
                     
-                    # 사각형으로 버블 영역 표시 (반투명 녹색)
+                    # 사각형으로 버블 영역 표시 (선명한 녹색, 굵은 선)
                     top_left = (int(cx - bubble_w//2), int(cy - bubble_h//2))
                     bottom_right = (int(cx + bubble_w//2), int(cy + bubble_h//2))
                     
-                    # 버블 테두리 (녹색)
-                    cv2.rectangle(viz_img, top_left, bottom_right, (0, 255, 0), 1)
+                    # 버블 테두리 (녹색, 선 굵기 2)
+                    cv2.rectangle(viz_img, top_left, bottom_right, (0, 255, 0), 2)
                     
                     # 중심점 (작은 빨간 점)
-                    cv2.circle(viz_img, (cx, cy), 2, (0, 0, 255), -1)
+                    cv2.circle(viz_img, (cx, cy), 3, (0, 0, 255), -1)
         
-        # Field block 이름 표시
+        # Field block 이름 표시 (더 크고 선명하게)
         for field_block in template.field_blocks:
             if field_block.traverse_bubbles:
                 first_bubble = field_block.traverse_bubbles[0][0]
@@ -587,23 +689,27 @@ def draw_template_bubbles_on_image(image, template):
                 # 텍스트 배경
                 text = field_block.name
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 0.4
-                thickness = 1
-                (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                font_scale = 0.6  # 0.4 → 0.6로 증가
+                thickness = 2     # 1 → 2로 증가
+                (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
                 
-                # 배경 사각형 (반투명 흰색)
-                cv2.rectangle(viz_img, 
-                            (cx - 5, cy - text_h - 10), 
-                            (cx + text_w + 5, cy - 5),
-                            (255, 255, 255), -1)
+                # 배경 박스 (반투명 흰색)
+                overlay = viz_img.copy()
+                cv2.rectangle(overlay, 
+                             (cx - 5, cy - text_h - 10), 
+                             (cx + text_w + 5, cy - 5), 
+                             (255, 255, 255), -1)
+                cv2.addWeighted(overlay, 0.7, viz_img, 0.3, 0, viz_img)
                 
-                # 텍스트 (검정색)
-                cv2.putText(viz_img, text, (cx, cy - 8),
-                           font, font_scale, (0, 0, 0), thickness)
+                # 텍스트
+                cv2.putText(viz_img, text, 
+                           (cx, cy - 7), 
+                           font, font_scale, (0, 100, 0), thickness, cv2.LINE_AA)
         
         return viz_img
+    
     except Exception as e:
-        logger.error(f"템플릿 버블 표시 중 에러: {e}")
+        logger.error(f"버블 표시 중 에러: {e}")
         return image
 
 
@@ -1455,20 +1561,44 @@ TEMPLATE_EDITOR_HTML = """
             --g900: #111827;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:var(--g50); color:var(--g900); }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .container { max-width: 1600px; margin: 0 auto; padding: 20px; }
         .header { background: white; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 8px; }
         .header h1 { font-size: 1.5rem; margin-bottom: 8px; color: var(--g900); }
         .header p { color: var(--g500); font-size: 0.9rem; }
         .nav-link { display: inline-block; margin-top: 12px; color: var(--primary); text-decoration: none; font-size: 0.9rem; }
         .nav-link:hover { text-decoration: underline; }
         
-        .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        /* 시각화를 위로, JSON 편집을 아래로 */
+        .layout { display: flex; flex-direction: column; gap: 20px; }
         .panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .panel h2 { font-size: 1.1rem; margin-bottom: 15px; color: var(--g700); }
         
-        #editor { width: 100%; height: 70vh; border: 1px solid var(--g300); border-radius: 6px; padding: 12px; font-family: 'Monaco', 'Consolas', monospace; font-size: 13px; resize: vertical; }
+        /* 시각화 패널 - 최대한 크게 */
+        .panel-visualization { order: 1; }
+        #preview { 
+            width: 100%; 
+            max-height: none; 
+            overflow: auto; 
+            border: 1px solid var(--g300); 
+            border-radius: 6px; 
+            background: var(--g50); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 600px; 
+        }
+        #preview img { 
+            max-width: 100%; 
+            height: auto; 
+            display: block;
+        }
+        #preview.loading::after { content: '시각화 중...'; color: var(--g500); }
         
-        .buttons { display: flex; gap: 10px; margin-top: 15px; }
+        /* JSON 편집 패널 - 아래로 */
+        .panel-editor { order: 2; }
+        #editor { width: 100%; height: 50vh; border: 1px solid var(--g300); border-radius: 6px; padding: 12px; font-family: 'Monaco', 'Consolas', monospace; font-size: 13px; resize: vertical; }
+        
+        .buttons { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
         .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 500; }
         .btn-primary { background: var(--primary); color: white; }
         .btn-primary:hover { background: #1d4ed8; }
@@ -1480,16 +1610,12 @@ TEMPLATE_EDITOR_HTML = """
         .message.error { background: #fee2e2; color: var(--error); border: 1px solid var(--error); }
         .message.active { display: block; }
         
-        #preview { width: 100%; max-height: 70vh; overflow: auto; border: 1px solid var(--g300); border-radius: 6px; background: var(--g50); display: flex; align-items: center; justify-content: center; min-height: 400px; }
-        #preview img { max-width: 100%; height: auto; }
-        #preview.loading::after { content: '시각화 중...'; color: var(--g500); }
-        
         .info-box { background: var(--primary-light); border-left: 3px solid var(--primary); padding: 12px; margin-bottom: 15px; font-size: 0.85rem; color: var(--g700); }
         
-        .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; font-size: 0.85rem; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 15px; font-size: 0.85rem; }
         .stat-item { background: var(--g50); padding: 10px; border-radius: 6px; }
-        .stat-label { color: var(--g500); margin-bottom: 4px; }
-        .stat-value { font-weight: 600; color: var(--g900); font-size: 1.1rem; }
+        .stat-label { color: var(--g500); margin-bottom: 4px; font-size: 0.75rem; }
+        .stat-value { font-weight: 600; color: var(--g900); font-size: 1rem; }
     </style>
 </head>
 <body>
@@ -1501,8 +1627,24 @@ TEMPLATE_EDITOR_HTML = """
         </div>
         
         <div class="layout">
-            <div class="panel">
-                <h2>템플릿 JSON 편집</h2>
+            <!-- 시각화 패널 - 위쪽 (크게) -->
+            <div class="panel panel-visualization">
+                <h2>🖼️ 버블 위치 시각화 (실제 인식 프로세스 적용)</h2>
+                <div class="info-box">
+                    <strong>📸 이미지 업로드</strong>: 실제 채점과 동일한 전처리 (레드 드롭아웃 → 회전 → 마커 검출 → Affine 변환 → Levels → GaussianBlur)<br>
+                    <strong>📐 빈 템플릿</strong>: 표준 크기(3507×2480)에 버블 위치만 표시
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <input type="file" id="imageUpload" accept="image/*" style="display: none;" onchange="uploadImageForVisualization()">
+                    <button class="btn btn-primary" onclick="document.getElementById('imageUpload').click()">📁 이미지 업로드</button>
+                    <button class="btn btn-secondary" onclick="visualizeTemplate()">👁️ 빈 템플릿</button>
+                </div>
+                <div id="preview"></div>
+            </div>
+            
+            <!-- JSON 편집 패널 - 아래쪽 -->
+            <div class="panel panel-editor">
+                <h2>📝 템플릿 JSON 편집</h2>
                 <div class="info-box">
                     💡 <strong>주의:</strong> JSON 형식이 올바른지 확인하세요. 잘못된 형식은 저장되지 않습니다.
                 </div>
@@ -1514,14 +1656,6 @@ TEMPLATE_EDITOR_HTML = """
                 </div>
                 <div id="message" class="message"></div>
                 <div class="stats" id="stats"></div>
-            </div>
-            
-            <div class="panel">
-                <h2>버블 위치 시각화</h2>
-                <div class="info-box">
-                    버블이 표시되지 않으면 JSON 형식을 확인하거나 "시각화" 버튼을 클릭하세요.
-                </div>
-                <div id="preview"></div>
             </div>
         </div>
     </div>
@@ -1599,7 +1733,41 @@ TEMPLATE_EDITOR_HTML = """
             
             preview.classList.remove('loading');
             if (response.ok && data.image) {
-                preview.innerHTML = '<img src="data:image/jpeg;base64,' + data.image + '" alt="Template Visualization">';
+                const imgFormat = data.format || 'jpeg';
+                preview.innerHTML = '<img src="data:image/' + imgFormat + ';base64,' + data.image + '" alt="Template Visualization" style="max-width: 100%; height: auto; image-rendering: -webkit-optimize-contrast;">';
+            } else {
+                preview.innerHTML = '<p style="color: var(--error);">시각화 실패: ' + (data.error || '알 수 없는 오류') + '</p>';
+            }
+        } catch(e) {
+            preview.classList.remove('loading');
+            preview.innerHTML = '<p style="color: var(--error);">에러: ' + e.message + '</p>';
+        }
+    }
+    
+    async function uploadImageForVisualization() {
+        const fileInput = document.getElementById('imageUpload');
+        const file = fileInput.files[0];
+        if (!file) return;
+        
+        const preview = document.getElementById('preview');
+        preview.classList.add('loading');
+        preview.innerHTML = '';
+        
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            const response = await fetch('/template-visualize', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            
+            preview.classList.remove('loading');
+            if (response.ok && data.image) {
+                const imgFormat = data.format || 'jpeg';
+                preview.innerHTML = '<img src="data:image/' + imgFormat + ';base64,' + data.image + '" alt="Template with User Image" style="max-width: 100%; height: auto; image-rendering: -webkit-optimize-contrast;">';
+                showMessage('이미지 업로드 완료 - 전처리 + 템플릿 오버레이', 'success');
             } else {
                 preview.innerHTML = '<p style="color: var(--error);">시각화 실패: ' + (data.error || '알 수 없는 오류') + '</p>';
             }
@@ -1887,23 +2055,100 @@ def template_save():
 
 @app.route("/template-visualize", methods=["POST"])
 def template_visualize():
-    """템플릿 시각화 - 빈 이미지에 버블 위치 표시"""
+    """템플릿 시각화 - 빈 이미지 또는 업로드된 이미지에 버블 위치 표시"""
     try:
-        # 빈 흰색 이미지 생성
         template = get_template()
         w, h = template.page_dimensions
-        blank_img = np.full((h, w, 3), 255, dtype=np.uint8)
+        
+        # 업로드된 이미지가 있으면 실제 인식 프로세스와 동일하게 처리
+        if 'image' in request.files and request.files['image'].filename:
+            file = request.files['image']
+            file_bytes = np.frombuffer(file.read(), np.uint8)
+            user_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            
+            if user_img is None:
+                return jsonify({"error": "이미지 로드 실패"}), 400
+            
+            logger.info(f"📸 템플릿 시각화: 이미지 업로드됨, 원본 크기={user_img.shape}")
+            
+            # 실제 인식 프로세스와 동일하게 처리
+            # 1. 마커 정렬 및 크롭 (marker_align_and_crop)
+            warped, success, debug_images = marker_align_and_crop(user_img, color_image=user_img)
+            
+            if success and warped is not None:
+                logger.info(f"✓ 마커 정렬 성공, 크기={warped.shape}")
+                processed_img = warped
+            else:
+                logger.warning("⚠️ 마커 정렬 실패 → 강제 리사이즈 적용")
+                # Fallback: 레드 드롭아웃만 적용
+                if len(user_img.shape) == 3:
+                    b, g, r = cv2.split(user_img)
+                    red_mask = (r > b + 30) & (r > g + 30) & (r > 100)
+                    processed_img = np.maximum(np.maximum(b, g), r)
+                    processed_img[red_mask] = 255
+                else:
+                    processed_img = user_img.copy()
+                
+                logger.info(f"  레드 드롭아웃 후 크기: {processed_img.shape}")
+                
+                # 표준 크기로 리사이즈
+                processed_img, resize_success = ensure_standard_size(processed_img, target_size=(w, h))
+                logger.info(f"  리사이즈 후 크기: {processed_img.shape}, 성공={resize_success}")
+            
+            # 크기 검증
+            if processed_img.shape[:2] != (h, w):
+                logger.error(f"❌ 크기 불일치: {processed_img.shape[:2]} != ({h}, {w})")
+                # 강제 리사이즈
+                processed_img = cv2.resize(processed_img, (w, h), interpolation=cv2.INTER_AREA)
+                logger.info(f"  강제 리사이즈 완료: {processed_img.shape}")
+            
+            # 2. 전처리 적용 (Levels, GaussianBlur)
+            template.image_instance_ops.reset_all_save_img()
+            template.image_instance_ops.append_save_img(1, processed_img)
+            final_img = template.image_instance_ops.apply_preprocessors(
+                "preview", processed_img, template
+            )
+            
+            if final_img is None:
+                logger.warning("⚠️ 전처리 실패 - 원본 사용")
+                final_img = processed_img
+            else:
+                logger.info(f"✓ 전처리 완료: {final_img.shape}")
+            
+            # 크기 최종 검증
+            if final_img.shape[:2] != (h, w):
+                logger.error(f"❌ 전처리 후 크기 불일치: {final_img.shape[:2]} != ({h}, {w})")
+                final_img = cv2.resize(final_img, (w, h), interpolation=cv2.INTER_AREA)
+                logger.info(f"  최종 리사이즈 완료: {final_img.shape}")
+            
+            # 컬러로 변환
+            if len(final_img.shape) == 2:
+                blank_img = cv2.cvtColor(final_img, cv2.COLOR_GRAY2BGR)
+            else:
+                blank_img = final_img
+        else:
+            # 빈 흰색 이미지 생성
+            blank_img = np.full((h, w, 3), 255, dtype=np.uint8)
+            logger.info(f"📐 빈 템플릿 생성: {blank_img.shape}")
         
         # 버블 위치 표시
         viz_img = draw_template_bubbles_on_image(blank_img, template)
         
-        # Base64로 인코딩
-        img_base64 = numpy_to_base64_jpeg(viz_img, max_h=1200)
+        # 고해상도로 인코딩 (PNG, 압축 최소)
+        encode_params = [
+            cv2.IMWRITE_PNG_COMPRESSION, 1,  # 1 = 최소 압축 (고품질)
+        ]
+        _, buf = cv2.imencode(".png", viz_img, encode_params)
+        img_base64 = base64.b64encode(buf).decode("ascii")
         
-        return jsonify({"image": img_base64})
+        logger.info(f"✓ 시각화 완료: {viz_img.shape}, {len(img_base64)} bytes")
+        
+        return jsonify({"image": img_base64, "format": "png"})
     
     except Exception as e:
-        logger.error(f"템플릿 시각화 중 에러: {e}")
+        logger.error(f"❌ 템플릿 시각화 중 에러: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
