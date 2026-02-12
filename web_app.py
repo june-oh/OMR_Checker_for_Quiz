@@ -193,41 +193,18 @@ def rotate_image_warp(image, angle):
     return cv2.warpAffine(image, matrix, (new_w, new_h))
 
 
-def marker_align_and_crop(image, color_image=None):
+def detect_markers(gray_image):
     """
-    3개의 코너 마커를 검출하여 Affine 변환으로 정렬+크롭.
-    rotate_test.py의 원본 로직을 그대로 사용.
-
-    처리 순서:
-    1. 90도 회전
-    2. CLAHE 대비 증가
-    3. 적응형 이진화로 사각형(마커) 검출
-    4. 3개 마커 중심점 → Affine 워프 → (3507, 2480) 출력
-    5. 워프된 컬러 이미지에서 Red 채널 추출 (빨간 인쇄 드롭아웃)
-
-    image: 그레이스케일 (Red 채널)
-    color_image: 원본 컬러 이미지 (워프 후 Red 채널 추출용)
-    Returns: (warped_red_channel, success_bool)
+    이미지에서 3개의 사각형 마커를 검출하여 중심점을 반환.
+    Returns: (centers_array, success_bool)
     """
-    DST_SIZE = (3507, 2480)
-
     try:
-        # 컬러 이미지가 있으면 사용, 없으면 그레이스케일에서 변환
-        if color_image is not None:
-            color_img = color_image.copy()
-        elif len(image.shape) == 2:
-            color_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-        else:
-            color_img = image.copy()
-
-        # 1. 90도 회전
-        color_img = rotate_image_warp(color_img, 90)
-
-        # 2. CLAHE는 마커 검출용으로만 사용 (원본 보존)
-        detect_img = increase_contrast_with_clahe(color_img.copy())
+        # CLAHE 대비 증가
+        detect_img = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR) if len(gray_image.shape) == 2 else gray_image.copy()
+        detect_img = increase_contrast_with_clahe(detect_img)
         gray = cv2.cvtColor(detect_img, cv2.COLOR_BGR2GRAY)
-
-        # 3. 적응형 이진화로 사각형 검출
+        
+        # 적응형 이진화로 사각형 검출
         thresh = cv2.adaptiveThreshold(
             gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -236,7 +213,7 @@ def marker_align_and_crop(image, color_image=None):
         contours, _ = cv2.findContours(
             thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-
+        
         squares = []
         for cnt in contours:
             approx = cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)
@@ -248,14 +225,11 @@ def marker_align_and_crop(image, color_image=None):
                     # 정사각형에 가까운 것만 선택 (1:1.5 비율까지 허용)
                     if aspect_ratio <= 1.5:
                         squares.append(approx)
-
+        
         if len(squares) != 3:
-            logger.warning(
-                f"마커 검출 실패: {len(squares)}개 발견 (3개 필요)"
-            )
             return None, False
-
-        # 4. 마커 중심점 계산
+        
+        # 마커 중심점 계산
         centers = []
         for square in squares:
             M = cv2.moments(square)
@@ -264,36 +238,248 @@ def marker_align_and_crop(image, color_image=None):
             cX = int(M["m10"] / M["m00"])
             cY = int(M["m01"] / M["m00"])
             centers.append([cX, cY])
-
+        
         if len(centers) != 3:
             return None, False
+        
+        return np.array(centers), True
+    except Exception as e:
+        logger.debug(f"마커 검출 중 에러: {e}")
+        return None, False
 
-        centers = np.array(centers)
 
-        # 위쪽 2개, 아래쪽 1개 분류
-        sorted_indices = np.argsort(centers[:, 1])
-        top_indices = sorted_indices[:2]
-        bottom_index = sorted_indices[-1]
+def determine_orientation_from_markers(centers):
+    """
+    마커 위치를 기반으로 이미지 회전 각도를 결정.
+    마커가 왼쪽 위, 오른쪽 위, 오른쪽 아래에 오도록 회전 각도 반환.
+    
+    Returns: rotation_angle (0, 90, 180, 270)
+    """
+    # 위쪽 2개, 아래쪽 1개 분류
+    sorted_by_y = sorted(centers, key=lambda c: c[1])
+    
+    # 가장 위쪽 2개
+    top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
+    bottom_one = sorted_by_y[2]
+    
+    # 아래쪽 마커의 x 좌표 확인
+    left_x = top_two[0][0]
+    right_x = top_two[1][0]
+    bottom_x = bottom_one[0]
+    
+    # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
+    if bottom_x > (left_x + right_x) / 2:
+        # 정상 방향
+        return 0
+    elif bottom_one[1] < top_two[0][1]:
+        # 180도 회전 필요 (위아래 뒤집힘)
+        return 180
+    elif bottom_x < left_x:
+        # 90도 시계반대방향 회전 필요
+        return 270
+    else:
+        # 90도 시계방향 회전 필요
+        return 90
 
-        top_points = centers[top_indices]
-        if top_points[0][0] < top_points[1][0]:
-            top_left = top_points[0]
-            top_right = top_points[1]
+
+def detect_markers(gray_image):
+    """
+    이미지에서 3개의 사각형 마커를 검출하여 중심점을 반환.
+    Returns: (centers_array, success_bool)
+    """
+    try:
+        # CLAHE 대비 증가
+        detect_img = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR) if len(gray_image.shape) == 2 else gray_image.copy()
+        detect_img = increase_contrast_with_clahe(detect_img)
+        gray = cv2.cvtColor(detect_img, cv2.COLOR_BGR2GRAY)
+        
+        # 적응형 이진화로 사각형 검출
+        thresh = cv2.adaptiveThreshold(
+            gray, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 19, 2
+        )
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        
+        squares = []
+        for cnt in contours:
+            approx = cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)
+            if len(approx) == 4:
+                x, y, w, h = cv2.boundingRect(approx)
+                # 마커 크기 범위 확대 (다양한 스캐너 해상도 지원)
+                if 30 <= w <= 120 and 30 <= h <= 120:
+                    aspect_ratio = max(w, h) / min(w, h)
+                    # 정사각형에 가까운 것만 선택 (1:1.5 비율까지 허용)
+                    if aspect_ratio <= 1.5:
+                        squares.append(approx)
+        
+        if len(squares) != 3:
+            return None, False
+        
+        # 마커 중심점 계산
+        centers = []
+        for square in squares:
+            M = cv2.moments(square)
+            if M["m00"] == 0:
+                continue
+            cX = int(M["m10"] / M["m00"])
+            cY = int(M["m01"] / M["m00"])
+            centers.append([cX, cY])
+        
+        if len(centers) != 3:
+            return None, False
+        
+        return np.array(centers), True
+    except Exception as e:
+        logger.debug(f"마커 검출 중 에러: {e}")
+        return None, False
+
+
+def determine_orientation_from_markers(centers):
+    """
+    마커 위치를 기반으로 이미지 회전 각도를 결정.
+    마커가 왼쪽 위, 오른쪽 위, 오른쪽 아래에 오도록 회전 각도 반환.
+    
+    Returns: rotation_angle (0, 90, 180, 270)
+    """
+    # 위쪽 2개, 아래쪽 1개 분류
+    sorted_by_y = sorted(centers, key=lambda c: c[1])
+    
+    # 가장 위쪽 2개
+    top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
+    bottom_one = sorted_by_y[2]
+    
+    # 아래쪽 마커의 x 좌표 확인
+    left_x = top_two[0][0]
+    right_x = top_two[1][0]
+    bottom_x = bottom_one[0]
+    
+    # 아래쪽 마커가 오른쪽에 있어야 정상 (오른쪽 아래)
+    if bottom_x > (left_x + right_x) / 2:
+        # 정상 방향
+        return 0
+    elif bottom_one[1] < top_two[0][1]:
+        # 180도 회전 필요 (위아래 뒤집힘)
+        return 180
+    elif bottom_x < left_x:
+        # 90도 시계반대방향 회전 필요
+        return 270
+    else:
+        # 90도 시계방향 회전 필요
+        return 90
+
+
+def marker_align_and_crop(image, color_image=None):
+    """
+    3개의 코너 마커를 검출하여 Affine 변환으로 정렬+크롭.
+    
+    개선된 처리 순서:
+    1. 원본 이미지에서 마커 검출 (4방향 시도)
+    2. 마커 위치 기반으로 올바른 방향 결정 및 회전
+    3. 회전된 이미지에서 마커 재검출
+    4. Affine 변환으로 정렬 및 크롭 → (3507, 2480)
+    5. 컬러 드롭아웃 (빨간 인쇄 제거)
+
+    image: 그레이스케일 (Red 채널)
+    color_image: 원본 컬러 이미지 (워프 후 Red 채널 추출용)
+    Returns: (warped_red_channel, success_bool, debug_images_dict)
+    """
+    DST_SIZE = (3507, 2480)
+    debug_images = {}
+
+    try:
+        # 컬러 이미지가 있으면 사용, 없으면 그레이스케일에서 변환
+        if color_image is not None:
+            color_img = color_image.copy()
+        elif len(image.shape) == 2:
+            color_img = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         else:
-            top_left = top_points[1]
-            top_right = top_points[0]
-
-        bottom_point = centers[bottom_index]
-
-        # 방향 보정: 아래쪽 마커가 위쪽보다 위에 있으면 추가 회전
-        if centers[bottom_index][1] < centers[top_indices].mean(axis=0)[1]:
-            color_img = rotate_image_warp(color_img, 90)
-            # 마커를 다시 검출해야 하지만, 원본 코드 로직 유지
-            logger.info("방향 보정: 추가 90도 회전")
-
+            color_img = image.copy()
+        
+        # 디버그: 원본 이미지 저장
+        debug_images['01_original'] = color_img.copy()
+        
+        # 그레이스케일 변환
+        if len(color_img.shape) == 3:
+            gray = cv2.cvtColor(color_img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = color_img.copy()
+        
+        # 1. 마커 검출 시도 (최대 4방향)
+        best_angle = None
+        best_centers = None
+        
+        for angle in [0, 90, 180, 270]:
+            if angle == 0:
+                test_img = gray.copy()
+            else:
+                if angle == 90:
+                    test_img = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
+                elif angle == 180:
+                    test_img = cv2.rotate(gray, cv2.ROTATE_180)
+                else:  # 270
+                    test_img = cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            
+            centers, success = detect_markers(test_img)
+            if success:
+                # 마커 위치 기반으로 올바른 방향인지 확인
+                marker_angle = determine_orientation_from_markers(centers)
+                if marker_angle == 0:
+                    # 올바른 방향 찾음
+                    best_angle = angle
+                    best_centers = centers
+                    logger.info(f"마커 검출 성공: {angle}도 회전 시 정상 방향")
+                    break
+        
+        if best_angle is None or best_centers is None:
+            logger.warning("모든 방향에서 마커 검출 실패")
+            return None, False, debug_images
+        
+        # 2. 올바른 방향으로 회전
+        if best_angle == 0:
+            rotated_img = color_img.copy()
+        elif best_angle == 90:
+            rotated_img = cv2.rotate(color_img, cv2.ROTATE_90_CLOCKWISE)
+        elif best_angle == 180:
+            rotated_img = cv2.rotate(color_img, cv2.ROTATE_180)
+        else:  # 270
+            rotated_img = cv2.rotate(color_img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        
+        debug_images['02_rotated'] = rotated_img.copy()
+        
+        # 3. 회전된 이미지에서 마커 재검출 (더 정확한 좌표)
+        if len(rotated_img.shape) == 3:
+            gray_rotated = cv2.cvtColor(rotated_img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray_rotated = rotated_img.copy()
+        
+        centers, success = detect_markers(gray_rotated)
+        if not success:
+            logger.warning("회전 후 마커 재검출 실패")
+            return None, False, debug_images
+        
+        # 마커 위치 표시 (디버그용)
+        marked_img = rotated_img.copy()
+        for i, center in enumerate(centers):
+            cv2.circle(marked_img, tuple(center.astype(int)), 20, (0, 255, 0), 3)
+            cv2.putText(marked_img, f"M{i+1}", tuple(center.astype(int)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
+        debug_images['03_markers_detected'] = marked_img
+        
+        # 4. 마커를 왼쪽 위, 오른쪽 위, 오른쪽 아래로 정렬
+        sorted_by_y = sorted(centers, key=lambda c: c[1])
+        top_two = sorted(sorted_by_y[:2], key=lambda c: c[0])
+        bottom_one = sorted_by_y[2]
+        
+        top_left = top_two[0]
+        top_right = top_two[1]
+        bottom_right = bottom_one
+        
         # 5. Affine 변환으로 워프
         src_pts = np.array(
-            [top_left, top_right, bottom_point], dtype="float32"
+            [top_left, top_right, bottom_right], dtype="float32"
         )
         dst_pts = np.array(
             [[0, 0], [DST_SIZE[0], 0], [DST_SIZE[0], DST_SIZE[1]]],
@@ -301,25 +487,31 @@ def marker_align_and_crop(image, color_image=None):
         )
 
         M_affine = cv2.getAffineTransform(src_pts, dst_pts)
-        warped = cv2.warpAffine(color_img, M_affine, DST_SIZE)
+        warped = cv2.warpAffine(rotated_img, M_affine, DST_SIZE)
+        
+        debug_images['04_warped'] = warped.copy()
 
-        # 원본 rotate_test.py와 동일하게 JPEG 인코딩/디코딩 (JPEG 압축이 잔상 제거에 도움)
+        # JPEG 인코딩/디코딩 (JPEG 압축이 잔상 제거에 도움)
         _, jpeg_buf = cv2.imencode(".jpg", warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
         warped = cv2.imdecode(jpeg_buf, cv2.IMREAD_COLOR)
 
-        # 컬러 드롭아웃: max(B,G,R) → 컬러 인쇄 밝게, 검정 마킹만 어둡게
+        # 6. 컬러 드롭아웃: max(B,G,R) → 컬러 인쇄 밝게, 검정 마킹만 어둡게
         if len(warped.shape) == 3:
             wb, wg, wr = cv2.split(warped)
             warped = np.maximum(np.maximum(wb, wg), wr)
+        
+        debug_images['05_color_dropout'] = warped.copy()
 
         logger.info(
-            f"마커 정렬+크롭 완료 (color dropout): {image.shape} -> {warped.shape}"
+            f"마커 정렬+크롭 완료 (회전: {best_angle}도): {image.shape} -> {warped.shape}"
         )
-        return warped, True
+        return warped, True, debug_images
 
     except Exception as e:
         logger.warning(f"마커 정렬+크롭 실패: {e}")
-        return None, False
+        import traceback
+        traceback.print_exc()
+        return None, False, debug_images
 
 
 def process_single_image(template, image, file_name, enable_crop=True, color_image=None):
@@ -328,13 +520,16 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
     enable_crop=True 시 3개 코너 마커 기반으로 정렬+크롭 수행.
     color_image: 원본 컬러 이미지 (크롭 시 Red 채널 드롭아웃용)
     Returns: (result_dict, error_message)
-      result_dict에 final_marked (numpy) 포함
+      result_dict에 final_marked (numpy), debug_images 포함
     """
     try:
-        # 마커 기반 정렬+크롭 (rotate_test.py 로직)
+        # 마커 기반 정렬+크롭 (개선된 로직)
         was_cropped = False
+        debug_images = {}
+        
         if enable_crop:
-            cropped, success = marker_align_and_crop(image, color_image=color_image)
+            cropped, success, debug_imgs = marker_align_and_crop(image, color_image=color_image)
+            debug_images.update(debug_imgs)
             if success and cropped is not None:
                 image = cropped
                 was_cropped = True
@@ -347,6 +542,9 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
         )
         if processed is None:
             return None, "전처리 실패 (마커 인식 불가)"
+        
+        # 전처리 후 이미지 저장
+        debug_images['06_preprocessed'] = processed.copy()
 
         response_dict, final_marked, multi_marked, multi_roll = (
             template.image_instance_ops.read_omr_response(
@@ -363,10 +561,13 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
             "multi_marked": bool(multi_marked),
             "final_marked": final_marked,
             "was_cropped": was_cropped,
+            "debug_images": debug_images,
         }, None
 
     except Exception as e:
         logger.error(f"Error processing {file_name}: {e}")
+        import traceback
+        traceback.print_exc()
         return None, str(e)
 
 
@@ -749,7 +950,7 @@ HTML_TEMPLATE = r"""
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <img id="modalImage" src="" alt="OMR 인식 결과">
+            <div id="modalImage" style="max-height: 70vh; overflow-y: auto;"></div>
             <div class="modal-detail" id="modalDetail"></div>
         </div>
     </div>
@@ -973,10 +1174,50 @@ function openModal(idx) {
     if (!lastResults || !lastResults.results[idx]) return;
     const r = lastResults.results[idx];
     const debugImg = r._debug_image;
-    if (!debugImg) return;
+    const debugImages = r._debug_images;
+    
+    if (!debugImg && !debugImages) return;
 
     document.getElementById('modalTitle').textContent = `인식 결과: ${r.file_id}`;
-    document.getElementById('modalImage').src = 'data:image/jpeg;base64,' + debugImg;
+    
+    // 여러 디버그 이미지가 있으면 표시
+    let imageHtml = '';
+    if (debugImages && Object.keys(debugImages).length > 0) {
+        const stages = [
+            {key: '01_original', label: '1. 원본 이미지'},
+            {key: '02_rotated', label: '2. 회전 보정'},
+            {key: '03_markers_detected', label: '3. 마커 검출'},
+            {key: '04_warped', label: '4. Affine 변환'},
+            {key: '05_color_dropout', label: '5. 컬러 드롭아웃'},
+            {key: '06_preprocessed', label: '6. 전처리 완료'}
+        ];
+        
+        stages.forEach(stage => {
+            if (debugImages[stage.key]) {
+                imageHtml += `
+                    <div style="margin-bottom: 20px;">
+                        <h4 style="margin: 10px 0; color: #333; font-size: 14px;">${stage.label}</h4>
+                        <img src="data:image/jpeg;base64,${debugImages[stage.key]}" 
+                             style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>`;
+            }
+        });
+        
+        // 최종 결과 (마킹 표시)
+        if (debugImg) {
+            imageHtml += `
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 10px 0; color: #333; font-size: 14px;">7. 최종 인식 결과</h4>
+                    <img src="data:image/jpeg;base64,${debugImg}" 
+                         style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+                </div>`;
+        }
+    } else if (debugImg) {
+        // 기존 방식 (호환성)
+        imageHtml = `<img id="modalImage" src="data:image/jpeg;base64,${debugImg}" style="max-width: 100%;">`;
+    }
+    
+    document.getElementById('modalImage').innerHTML = imageHtml;
 
     // Detail table
     let detailHtml = '';
@@ -1139,7 +1380,14 @@ def process_omr():
                 row["_incorrect"] = incorrect_cnt
                 row["_unmarked"] = unmarked_cnt
 
-            # 디버그 이미지
+            # 디버그 이미지들
+            if has_debug and result.get("debug_images"):
+                row["_debug_images"] = {}
+                for key, img in result["debug_images"].items():
+                    if img is not None:
+                        row["_debug_images"][key] = numpy_to_base64_jpeg(img, max_h=600)
+            
+            # 최종 마킹 이미지 (기존 호환성 유지)
             if has_debug and result["final_marked"] is not None:
                 row["_debug_image"] = numpy_to_base64_jpeg(result["final_marked"])
 
