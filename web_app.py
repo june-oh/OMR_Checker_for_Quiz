@@ -598,6 +598,49 @@ def draw_template_bubbles_on_image(image, template):
         return image
 
 
+def ensure_standard_size(image, target_size=(3507, 2480)):
+    """
+    이미지를 표준 크기로 리사이즈 (마커 검출 실패 시 fallback).
+    aspect ratio를 유지하면서 리사이즈한 후 패딩 추가.
+    """
+    try:
+        h, w = image.shape[:2]
+        target_w, target_h = target_size
+        
+        # 이미 표준 크기면 그대로 반환
+        if (w, h) == target_size:
+            logger.info(f"이미지가 이미 표준 크기 {target_size}")
+            return image, True
+        
+        # aspect ratio 계산
+        scale_w = target_w / w
+        scale_h = target_h / h
+        scale = min(scale_w, scale_h)
+        
+        # 리사이즈
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
+        # 패딩 추가 (중앙 정렬)
+        if len(image.shape) == 3:
+            result = np.full((target_h, target_w, image.shape[2]), 255, dtype=np.uint8)
+        else:
+            result = np.full((target_h, target_w), 255, dtype=np.uint8)
+        
+        # 중앙에 배치
+        y_offset = (target_h - new_h) // 2
+        x_offset = (target_w - new_w) // 2
+        result[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
+        
+        logger.warning(f"마커 없이 리사이즈: {w}×{h} → {target_w}×{target_h} (scale={scale:.3f})")
+        return result, False
+        
+    except Exception as e:
+        logger.error(f"리사이즈 중 에러: {e}")
+        return image, False
+
+
 def process_single_image(template, image, file_name, enable_crop=True, color_image=None):
     """
     단일 이미지 OMR 처리.
@@ -617,6 +660,25 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
             if success and cropped is not None:
                 image = cropped
                 was_cropped = True
+                logger.info("✓ 마커 기반 정렬 성공")
+            else:
+                # 마커 검출 실패 시 강제 리사이즈
+                logger.warning("마커 검출 실패 → 강제 리사이즈로 fallback")
+                image, resize_success = ensure_standard_size(image)
+                debug_images['fallback_resize'] = image.copy()
+                if not resize_success:
+                    logger.error("강제 리사이즈도 실패")
+        
+        # 크기 확인 및 검증
+        h, w = image.shape[:2]
+        expected_w, expected_h = 3507, 2480
+        if (w, h) != (expected_w, expected_h):
+            logger.error(f"크기 불일치: {w}×{h} (기대값: {expected_w}×{expected_h})")
+            # 최종 강제 리사이즈
+            image, _ = ensure_standard_size(image)
+            debug_images['final_resize'] = image.copy()
+        
+        logger.info(f"최종 이미지 크기: {image.shape}")
 
         template.image_instance_ops.reset_all_save_img()
         template.image_instance_ops.append_save_img(1, image)
@@ -1277,8 +1339,10 @@ function openModal(idx) {
             {key: '03_markers_detected', label: '3. 마커 검출'},
             {key: '04_warped', label: '4. Affine 변환'},
             {key: '05_color_dropout', label: '5. 컬러 드롭아웃'},
+            {key: 'fallback_resize', label: '⚠️ Fallback 리사이즈 (마커 없음)'},
             {key: '06_preprocessed', label: '6. 전처리 완료'},
-            {key: '07_template_overlay', label: '7. 템플릿 버블 위치'}
+            {key: '07_template_overlay', label: '7. 템플릿 버블 위치'},
+            {key: 'final_resize', label: '⚠️ 최종 크기 보정'}
         ];
         
         stages.forEach(stage => {
