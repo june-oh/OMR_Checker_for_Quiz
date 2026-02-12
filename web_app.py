@@ -413,10 +413,10 @@ def marker_align_and_crop(image, color_image=None):
     
     올바른 처리 순서:
     1. 컬러 드롭아웃 (빨간 인쇄 제거) → 흑백 변환
-    2. 흑백 이미지에서 마커 검출 (4방향 시도)
-    3. 마커 위치 기반 회전 보정
-    4. 마커 바깥쪽 기준 Affine 변환 + 크롭 → (3507, 2480)
-    5. 전처리
+    2. 세로/가로 판단 → 세로면 무조건 90도 회전
+    3. 흑백 이미지에서 마커 검출
+    4. 마커 위치 확인 및 추가 회전 (필요시)
+    5. 마커 바깥쪽 기준 Affine 변환 + 크롭 → (3507, 2480)
 
     image: 그레이스케일 (Red 채널)
     color_image: 원본 컬러 이미지
@@ -455,68 +455,60 @@ def marker_align_and_crop(image, color_image=None):
         debug_images['02_color_dropout'] = gray.copy()
         logger.info(f"레드 드롭아웃 완료: {color_img.shape} → {gray.shape}")
         
-        # 2. 마커 검출 시도 (최대 4방향)
-        best_angle = None
-        best_centers = None
-        best_rotated_gray = None
+        # 2. 세로/가로 판단 및 기본 회전
+        h, w = gray.shape[:2]
+        logger.info(f"이미지 크기: {w}×{h} (가로×세로)")
         
-        for angle in [0, 90, 180, 270]:
-            if angle == 0:
-                test_img = gray.copy()
-            else:
-                if angle == 90:
-                    test_img = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
-                elif angle == 180:
-                    test_img = cv2.rotate(gray, cv2.ROTATE_180)
-                else:  # 270
-                    test_img = cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            
-            centers, success = detect_markers(test_img)
-            if success:
-                # 마커 위치 기반으로 올바른 방향인지 확인
-                logger.info(f"  각도 {angle}도에서 마커 검출 성공:")
-                logger.info(f"    마커 좌표: {centers.tolist()}")
-                
-                marker_angle = determine_orientation_from_markers(centers)
-                
-                if marker_angle == 0:
-                    # 올바른 방향 찾음
-                    best_angle = angle
-                    best_centers = centers
-                    best_rotated_gray = test_img
-                    logger.info(f"✓ 최종 선택: {angle}도 회전으로 정상 방향")
-                    break
-                elif best_angle is None:
-                    # 첫 번째로 마커가 검출된 각도 저장 (fallback)
-                    best_angle = angle
-                    best_centers = centers
-                    best_rotated_gray = test_img
-                    logger.info(f"  임시 저장: {angle}도 (추가 {marker_angle}도 필요)")
-            else:
-                logger.info(f"  각도 {angle}도에서 마커 검출 실패")
+        if h > w:
+            # 세로 이미지 → 무조건 90도 회전 (가로로 만들기)
+            gray = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
+            initial_rotation = 90
+            logger.info(f"✓ 세로 이미지 감지 → 90도 회전: {gray.shape}")
+        else:
+            # 가로 이미지 → 그대로
+            initial_rotation = 0
+            logger.info(f"✓ 가로 이미지 감지 → 회전 없음: {gray.shape}")
         
-        if best_angle is None or best_centers is None:
-            logger.warning("모든 방향에서 마커 검출 실패")
+        debug_images['03_rotated'] = gray.copy()
+        
+        # 3. 마커 검출
+        centers, success = detect_markers(gray)
+        if not success:
+            logger.warning("마커 검출 실패")
             return None, False, debug_images
         
-        # 3. 회전 보정 (흑백 이미지)
-        rotated_gray = best_rotated_gray
-        logger.info(f"회전 보정 적용: {best_angle}도, 크기: {rotated_gray.shape}")
-        debug_images['03_rotated'] = rotated_gray.copy()
-        
-        # 4. 회전된 이미지에서 마커 재검출 (더 정확한 좌표)
-        centers, success = detect_markers(rotated_gray)
-        if not success:
-            logger.warning("회전 후 마커 재검출 실패 - 이전 좌표 사용")
-            centers = best_centers
+        logger.info(f"마커 검출 성공: {centers.tolist()}")
         
         # 마커 위치 표시 (디버그용)
-        marked_img = cv2.cvtColor(rotated_gray, cv2.COLOR_GRAY2BGR)
+        marked_img = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         for i, center in enumerate(centers):
             cv2.circle(marked_img, tuple(center.astype(int)), 20, (0, 255, 0), 3)
             cv2.putText(marked_img, f"M{i+1}", tuple(center.astype(int)), 
                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
         debug_images['04_markers_detected'] = marked_img
+        
+        # 4. 마커 방향 확인 및 추가 회전 (필요시)
+        additional_rotation = determine_orientation_from_markers(centers)
+        
+        if additional_rotation != 0:
+            logger.info(f"추가 회전 필요: {additional_rotation}도")
+            if additional_rotation == 90:
+                gray = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)
+            elif additional_rotation == 180:
+                gray = cv2.rotate(gray, cv2.ROTATE_180)
+            elif additional_rotation == 270:
+                gray = cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            
+            # 마커 재검출
+            centers, success = detect_markers(gray)
+            if not success:
+                logger.warning("추가 회전 후 마커 재검출 실패")
+                return None, False, debug_images
+            
+            debug_images['04b_after_additional_rotation'] = gray.copy()
+        
+        total_rotation = (initial_rotation + additional_rotation) % 360
+        logger.info(f"최종 회전: {total_rotation}도 (초기 {initial_rotation}도 + 추가 {additional_rotation}도)")
         
         # 5. 마커를 왼쪽 위, 오른쪽 위, 오른쪽 아래로 정렬
         sorted_by_y = sorted(centers, key=lambda c: c[1])
@@ -526,6 +518,8 @@ def marker_align_and_crop(image, color_image=None):
         top_left = top_two[0]
         top_right = top_two[1]
         bottom_right = bottom_one
+        
+        logger.info(f"마커 위치: TL{top_left.astype(int).tolist()}, TR{top_right.astype(int).tolist()}, BR{bottom_right.astype(int).tolist()}")
         
         # 6. Affine 변환으로 워프 (마커 바깥쪽을 기준으로 크롭)
         src_pts = np.array(
@@ -537,14 +531,12 @@ def marker_align_and_crop(image, color_image=None):
         )
 
         M_affine = cv2.getAffineTransform(src_pts, dst_pts)
-        warped = cv2.warpAffine(rotated_gray, M_affine, DST_SIZE)
+        warped = cv2.warpAffine(gray, M_affine, DST_SIZE)
         
-        logger.info(f"Affine 변환 완료: {rotated_gray.shape} → {warped.shape}, 기대값: {DST_SIZE}")
+        logger.info(f"Affine 변환 완료: {gray.shape} → {warped.shape}, 기대값: {DST_SIZE}")
         debug_images['05_warped'] = warped.copy()
 
-        logger.info(
-            f"마커 정렬+크롭 완료 (회전: {best_angle}도): {gray.shape} -> {warped.shape}"
-        )
+        logger.info(f"마커 정렬+크롭 완료 (총 회전: {total_rotation}도)")
         return warped, True, debug_images
 
     except Exception as e:
@@ -990,6 +982,7 @@ HTML_TEMPLATE = r"""
     <header>
         <h1>OMR Quiz 채점 시스템</h1>
         <p>답안 키와 OMR 스캔 이미지를 업로드하면 자동 인식 및 채점 결과를 CSV로 제공합니다</p>
+        <a href="/template-editor" style="display: inline-block; margin-top: 10px; padding: 8px 16px; background: var(--g200); color: var(--g700); text-decoration: none; border-radius: 6px; font-size: 0.85rem;">⚙️ 템플릿 편집기</a>
     </header>
 
     <!-- Guide (folded by default) -->
@@ -1437,6 +1430,196 @@ function resetForm() {
 </html>
 """
 
+# ── 템플릿 편집기 HTML ──
+TEMPLATE_EDITOR_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>템플릿 편집기 - OMR Checker</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        :root {
+            --primary: #2563eb;
+            --primary-light: rgba(37,99,235,.08);
+            --success: #16a34a;
+            --warning: #f59e0b;
+            --error: #dc2626;
+            --g50: #f9fafb;
+            --g100: #f3f4f6;
+            --g200: #e5e7eb;
+            --g300: #d1d5db;
+            --g500: #6b7280;
+            --g700: #374151;
+            --g900: #111827;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:var(--g50); color:var(--g900); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: white; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 8px; }
+        .header h1 { font-size: 1.5rem; margin-bottom: 8px; color: var(--g900); }
+        .header p { color: var(--g500); font-size: 0.9rem; }
+        .nav-link { display: inline-block; margin-top: 12px; color: var(--primary); text-decoration: none; font-size: 0.9rem; }
+        .nav-link:hover { text-decoration: underline; }
+        
+        .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .panel h2 { font-size: 1.1rem; margin-bottom: 15px; color: var(--g700); }
+        
+        #editor { width: 100%; height: 70vh; border: 1px solid var(--g300); border-radius: 6px; padding: 12px; font-family: 'Monaco', 'Consolas', monospace; font-size: 13px; resize: vertical; }
+        
+        .buttons { display: flex; gap: 10px; margin-top: 15px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; font-weight: 500; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-secondary { background: var(--g200); color: var(--g700); }
+        .btn-secondary:hover { background: var(--g300); }
+        
+        .message { padding: 12px; border-radius: 6px; margin-top: 15px; font-size: 0.9rem; display: none; }
+        .message.success { background: #dcfce7; color: var(--success); border: 1px solid var(--success); }
+        .message.error { background: #fee2e2; color: var(--error); border: 1px solid var(--error); }
+        .message.active { display: block; }
+        
+        #preview { width: 100%; max-height: 70vh; overflow: auto; border: 1px solid var(--g300); border-radius: 6px; background: var(--g50); display: flex; align-items: center; justify-content: center; min-height: 400px; }
+        #preview img { max-width: 100%; height: auto; }
+        #preview.loading::after { content: '시각화 중...'; color: var(--g500); }
+        
+        .info-box { background: var(--primary-light); border-left: 3px solid var(--primary); padding: 12px; margin-bottom: 15px; font-size: 0.85rem; color: var(--g700); }
+        
+        .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; font-size: 0.85rem; }
+        .stat-item { background: var(--g50); padding: 10px; border-radius: 6px; }
+        .stat-label { color: var(--g500); margin-bottom: 4px; }
+        .stat-value { font-weight: 600; color: var(--g900); font-size: 1.1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 템플릿 편집기</h1>
+            <p>OMR 템플릿 JSON을 편집하고 버블 위치를 시각화할 수 있습니다</p>
+            <a href="/" class="nav-link">← 메인으로 돌아가기</a>
+        </div>
+        
+        <div class="layout">
+            <div class="panel">
+                <h2>템플릿 JSON 편집</h2>
+                <div class="info-box">
+                    💡 <strong>주의:</strong> JSON 형식이 올바른지 확인하세요. 잘못된 형식은 저장되지 않습니다.
+                </div>
+                <textarea id="editor" spellcheck="false">{{ template_content }}</textarea>
+                <div class="buttons">
+                    <button class="btn btn-primary" onclick="saveTemplate()">💾 저장</button>
+                    <button class="btn btn-secondary" onclick="visualizeTemplate()">👁️ 시각화</button>
+                    <button class="btn btn-secondary" onclick="formatJson()">✨ 포맷 정리</button>
+                </div>
+                <div id="message" class="message"></div>
+                <div class="stats" id="stats"></div>
+            </div>
+            
+            <div class="panel">
+                <h2>버블 위치 시각화</h2>
+                <div class="info-box">
+                    버블이 표시되지 않으면 JSON 형식을 확인하거나 "시각화" 버튼을 클릭하세요.
+                </div>
+                <div id="preview"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function showMessage(text, type) {
+        const msg = document.getElementById('message');
+        msg.textContent = text;
+        msg.className = 'message ' + type + ' active';
+        setTimeout(() => msg.classList.remove('active'), 5000);
+    }
+    
+    function updateStats() {
+        try {
+            const json = JSON.parse(document.getElementById('editor').value);
+            const fieldBlocks = Object.keys(json.fieldBlocks || {}).length;
+            const bubbleW = json.bubbleDimensions ? json.bubbleDimensions[0] : '-';
+            const bubbleH = json.bubbleDimensions ? json.bubbleDimensions[1] : '-';
+            const pageW = json.pageDimensions ? json.pageDimensions[0] : '-';
+            const pageH = json.pageDimensions ? json.pageDimensions[1] : '-';
+            
+            document.getElementById('stats').innerHTML = `
+                <div class="stat-item"><div class="stat-label">페이지 크기</div><div class="stat-value">${pageW} × ${pageH}</div></div>
+                <div class="stat-item"><div class="stat-label">버블 크기</div><div class="stat-value">${bubbleW} × ${bubbleH}</div></div>
+                <div class="stat-item"><div class="stat-label">Field Blocks</div><div class="stat-value">${fieldBlocks}</div></div>
+                <div class="stat-item"><div class="stat-label">전처리 단계</div><div class="stat-value">${(json.preProcessors || []).length}</div></div>
+            `;
+        } catch(e) {
+            document.getElementById('stats').innerHTML = '<div class="stat-item" style="grid-column: span 2; color: var(--error);">JSON 파싱 에러</div>';
+        }
+    }
+    
+    function formatJson() {
+        try {
+            const json = JSON.parse(document.getElementById('editor').value);
+            document.getElementById('editor').value = JSON.stringify(json, null, 2);
+            showMessage('JSON 포맷 정리 완료', 'success');
+            updateStats();
+        } catch(e) {
+            showMessage('JSON 파싱 에러: ' + e.message, 'error');
+        }
+    }
+    
+    async function saveTemplate() {
+        try {
+            const template = document.getElementById('editor').value;
+            JSON.parse(template); // 검증
+            
+            const response = await fetch('/template-save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({template: template})
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                showMessage(data.message, 'success');
+                updateStats();
+            } else {
+                showMessage('저장 실패: ' + data.error, 'error');
+            }
+        } catch(e) {
+            showMessage('에러: ' + e.message, 'error');
+        }
+    }
+    
+    async function visualizeTemplate() {
+        const preview = document.getElementById('preview');
+        preview.classList.add('loading');
+        preview.innerHTML = '';
+        
+        try {
+            const response = await fetch('/template-visualize', {method: 'POST'});
+            const data = await response.json();
+            
+            preview.classList.remove('loading');
+            if (response.ok && data.image) {
+                preview.innerHTML = '<img src="data:image/jpeg;base64,' + data.image + '" alt="Template Visualization">';
+            } else {
+                preview.innerHTML = '<p style="color: var(--error);">시각화 실패: ' + (data.error || '알 수 없는 오류') + '</p>';
+            }
+        } catch(e) {
+            preview.classList.remove('loading');
+            preview.innerHTML = '<p style="color: var(--error);">에러: ' + e.message + '</p>';
+        }
+    }
+    
+    // 초기 통계 표시 및 시각화
+    updateStats();
+    visualizeTemplate();
+    
+    // 편집 시 통계 업데이트
+    document.getElementById('editor').addEventListener('input', updateStats);
+    </script>
+</body>
+</html>
+"""
+
 # ── 임시 CSV 저장소 ──
 _csv_store = {}
 
@@ -1648,6 +1831,80 @@ def download_csv(csv_id):
         as_attachment=True,
         download_name="omr_results.csv",
     )
+
+
+@app.route("/template-editor")
+def template_editor():
+    """템플릿 JSON 편집기 페이지"""
+    import json
+    
+    template_content = ""
+    if TEMPLATE_PATH.exists():
+        with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
+            template_dict = json.load(f)
+            template_content = json.dumps(template_dict, indent=2, ensure_ascii=False)
+    
+    return render_template_string(TEMPLATE_EDITOR_HTML, template_content=template_content)
+
+
+@app.route("/template-save", methods=["POST"])
+def template_save():
+    """템플릿 JSON 저장"""
+    import json
+    
+    try:
+        template_json = request.json.get('template')
+        if not template_json:
+            return jsonify({"error": "템플릿 내용이 없습니다"}), 400
+        
+        # JSON 유효성 검증
+        template_dict = json.loads(template_json)
+        
+        # 백업 생성
+        if TEMPLATE_PATH.exists():
+            backup_path = TEMPLATE_PATH.parent / f"template.backup.{uuid.uuid4().hex[:8]}.json"
+            import shutil
+            shutil.copy(TEMPLATE_PATH, backup_path)
+            logger.info(f"백업 생성: {backup_path}")
+        
+        # 저장
+        with open(TEMPLATE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(template_dict, f, indent=2, ensure_ascii=False)
+        
+        # 템플릿 리로드
+        global _template
+        _template = None
+        get_template()
+        
+        return jsonify({"success": True, "message": "템플릿이 저장되었습니다"})
+    
+    except json.JSONDecodeError as e:
+        return jsonify({"error": f"JSON 파싱 에러: {str(e)}"}), 400
+    except Exception as e:
+        logger.error(f"템플릿 저장 중 에러: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/template-visualize", methods=["POST"])
+def template_visualize():
+    """템플릿 시각화 - 빈 이미지에 버블 위치 표시"""
+    try:
+        # 빈 흰색 이미지 생성
+        template = get_template()
+        w, h = template.page_dimensions
+        blank_img = np.full((h, w, 3), 255, dtype=np.uint8)
+        
+        # 버블 위치 표시
+        viz_img = draw_template_bubbles_on_image(blank_img, template)
+        
+        # Base64로 인코딩
+        img_base64 = numpy_to_base64_jpeg(viz_img, max_h=1200)
+        
+        return jsonify({"image": img_base64})
+    
+    except Exception as e:
+        logger.error(f"템플릿 시각화 중 에러: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
