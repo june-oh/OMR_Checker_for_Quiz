@@ -1,9 +1,28 @@
+# Example files (test data, scanned images)
+example/
+
+# Output directories
+outputs/
+CheckedOMRs/
+Results/
+
+# Logs
+*.log
+
+# Python
 __pycache__/
-**/__pycache__/
 *.pyc
 *.pyo
-.env
-*.log
-saved_images/
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-*.egg-info/
+Thumbs.db

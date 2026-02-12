@@ -96,24 +96,76 @@ def auto_rotate_image(image, template=None):
 
 
 def _evaluate_rotation_quality(template, image):
+    """
+    회전 품질을 평가하는 함수.
+    마커 검출 성공 시 보너스를 주고, 학번(Num) 필드의 인식률을 추가로 고려.
+    """
     try:
+        # 마커 검출 시도
+        h, w = image.shape[:2]
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        # 간단한 마커 검출 시도 (성공 여부만 확인)
+        marker_bonus = 0
+        try:
+            thresh = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 19, 2
+            )
+            contours, _ = cv2.findContours(
+                thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            squares = []
+            for cnt in contours:
+                approx = cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)
+                if len(approx) == 4:
+                    x, y, w, h = cv2.boundingRect(approx)
+                    # 마커 크기 범위 확대 (다양한 스캐너 해상도 지원)
+                    if 30 <= w <= 120 and 30 <= h <= 120:
+                        aspect_ratio = max(w, h) / min(w, h)
+                        # 정사각형에 가까운 것만 선택
+                        if aspect_ratio <= 1.5:
+                            squares.append(approx)
+            # 마커가 2개 이상 검출되면 보너스
+            if len(squares) >= 2:
+                marker_bonus = 20
+        except Exception:
+            pass
+        
+        # OMR 응답 인식 시도
         template.image_instance_ops.reset_all_save_img()
         template.image_instance_ops.append_save_img(1, image)
         processed = template.image_instance_ops.apply_preprocessors(
             "rotation_test", image, template
         )
         if processed is None:
-            return -1
+            return -1 + marker_bonus
+        
         response_dict, _, multi_marked, _ = (
             template.image_instance_ops.read_omr_response(
                 template, image=processed, name="rotation_test", save_dir=None
             )
         )
         omr_response = get_concatenated_response(response_dict, template)
+        
+        # 학번 필드 인식 시 추가 보너스
+        num_field_bonus = 0
+        if 'Num' in omr_response and omr_response['Num'] and len(str(omr_response['Num'])) >= 5:
+            num_field_bonus = 15
+        
+        # 전체 응답 중 비어있지 않은 필드 수
         non_empty = sum(1 for v in omr_response.values() if v and v.strip())
+        
+        # 다중 마킹 패널티
         penalty = 10 if multi_marked else 0
-        return non_empty - penalty
-    except Exception:
+        
+        return non_empty + marker_bonus + num_field_bonus - penalty
+    except Exception as e:
+        logger.debug(f"회전 품질 평가 중 에러: {e}")
         return -1
 
 
@@ -190,8 +242,12 @@ def marker_align_and_crop(image, color_image=None):
             approx = cv2.approxPolyDP(cnt, 0.01 * cv2.arcLength(cnt, True), True)
             if len(approx) == 4:
                 x, y, w, h = cv2.boundingRect(approx)
-                if 40 <= w <= 100 and 40 <= h <= 100:
-                    squares.append(approx)
+                # 마커 크기 범위 확대 (다양한 스캐너 해상도 지원)
+                if 30 <= w <= 120 and 30 <= h <= 120:
+                    aspect_ratio = max(w, h) / min(w, h)
+                    # 정사각형에 가까운 것만 선택 (1:1.5 비율까지 허용)
+                    if aspect_ratio <= 1.5:
+                        squares.append(approx)
 
         if len(squares) != 3:
             logger.warning(
