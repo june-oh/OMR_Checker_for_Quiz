@@ -196,8 +196,8 @@ class Template:
         )
 
         if (
-            block_end_x >= page_width
-            or block_end_y >= page_height
+            block_end_x > page_width
+            or block_end_y > page_height
             or block_start_x < 0
             or block_start_y < 0
         ):
