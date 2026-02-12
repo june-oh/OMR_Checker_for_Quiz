@@ -469,6 +469,7 @@ def marker_align_and_crop(image, color_image=None):
         
         # 3. 회전 보정 (흑백 이미지)
         rotated_gray = best_rotated_gray
+        logger.info(f"회전 보정 적용: {best_angle}도, 크기: {rotated_gray.shape}")
         debug_images['03_rotated'] = rotated_gray.copy()
         
         # 4. 회전된 이미지에서 마커 재검출 (더 정확한 좌표)
@@ -506,6 +507,7 @@ def marker_align_and_crop(image, color_image=None):
         M_affine = cv2.getAffineTransform(src_pts, dst_pts)
         warped = cv2.warpAffine(rotated_gray, M_affine, DST_SIZE)
         
+        logger.info(f"Affine 변환 완료: {rotated_gray.shape} → {warped.shape}, 기대값: {DST_SIZE}")
         debug_images['05_warped'] = warped.copy()
 
         logger.info(
@@ -674,6 +676,17 @@ def process_single_image(template, image, file_name, enable_crop=True, color_ima
         
         # 전처리 후 이미지 저장
         debug_images['06_preprocessed'] = processed.copy()
+        
+        # 전처리 후 크기 검증
+        h, w = processed.shape[:2]
+        if (w, h) != (expected_w, expected_h):
+            logger.error(f"전처리 후 크기 불일치: {w}×{h} (기대값: {expected_w}×{expected_h})")
+            # 크기가 틀리면 전처리 전 이미지로 대체
+            processed = cv2.resize(image, (expected_w, expected_h), interpolation=cv2.INTER_AREA)
+            debug_images['06_preprocessed'] = processed.copy()
+            debug_images['preprocessed_resized'] = processed.copy()
+        
+        logger.info(f"전처리 후 크기: {processed.shape}")
         
         # 템플릿 버블 위치 표시 이미지 추가
         template_overlay = draw_template_bubbles_on_image(processed, template)
@@ -902,7 +915,7 @@ HTML_TEMPLATE = r"""
         .modal-close { background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--g500); padding:.2rem .5rem; }
         .modal-close:hover { color:var(--g900); }
         .modal-body { padding:1rem 1.25rem; }
-        .modal-body img { max-width:100%; height:auto; border-radius:6px; }
+        .modal-body img { max-width:100%; height:auto; }
         .modal-detail { margin-top:.75rem; }
         .modal-detail table { font-size:.8rem; }
         .modal-detail th { background:var(--g100); }
@@ -1334,7 +1347,8 @@ function openModal(idx) {
                     <div style="margin-bottom: 20px;">
                         <h4 style="margin: 10px 0; color: #333; font-size: 14px;">${stage.label}</h4>
                         <img src="data:image/jpeg;base64,${debugImages[stage.key]}" 
-                             style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+                             style="max-width: 100%; border: 1px solid #ddd;">
+                        <p style="font-size: 11px; color: #666; margin-top: 4px;">키: ${stage.key}</p>
                     </div>`;
             }
         });
@@ -1345,7 +1359,7 @@ function openModal(idx) {
                 <div style="margin-bottom: 20px;">
                     <h4 style="margin: 10px 0; color: #333; font-size: 14px;">8. 최종 인식 결과 (채점)</h4>
                     <img src="data:image/jpeg;base64,${debugImg}" 
-                         style="max-width: 100%; border: 1px solid #ddd; border-radius: 4px;">
+                         style="max-width: 100%; border: 1px solid #ddd;">
                 </div>`;
         }
     } else if (debugImg) {
